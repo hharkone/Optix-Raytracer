@@ -47,7 +47,7 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
 ```
 
 CMake will:
-- Download GLFW and ImGui (docking branch) from GitHub — internet access required on first configure
+- Download GLFW, ImGui (docking branch), tinygltf, and nativefiledialog-extended from GitHub — internet access required on first configure
 - Compile GLAD from the committed source
 - Detect CUDA Toolkit and OptiX SDK automatically
 
@@ -71,24 +71,29 @@ Alternatively, open `build/OptixRaytracer.sln` in Visual Studio 2022 and build f
 .\build\bin\Debug\OptixRaytracer.exe
 ```
 
-You should see a 1280×720 window with a dark background and a floating ImGui panel labelled **Raytracer** showing the OptiX context pointer.
+You should see a 1280×720 window with a dark background and a floating **Raytracer** ImGui panel. Click **Open glTF...** to browse for a `.gltf` or `.glb` file; the panel updates with mesh, material, and texture counts once the file loads.
 
 ## Project Structure
 
 ```
 Optix-Raytracer/
-├── CMakeLists.txt          Root build file: project settings, FetchContent, subdirs
+├── CMakeLists.txt           Root build file: project settings, FetchContent, subdirs
 ├── cmake/
-│   └── FindOptiX.cmake     Locates the OptiX SDK; creates OptiX::OptiX target
+│   └── FindOptiX.cmake      Locates the OptiX SDK; creates the OptiX::OptiX target
 ├── extern/
-│   └── glad/               Pre-generated OpenGL 3.3 core function loader
+│   └── glad/                Pre-generated OpenGL 3.3 core function loader
 ├── shaders/
-│   ├── LaunchParams.h      Data structs shared between C++ host and CUDA device code
-│   └── devicePrograms.cu   OptiX device programs (raygen, miss) — compiled to PTX
+│   ├── LaunchParams.h       LaunchParams struct shared between host and device code
+│   ├── SceneData.h          MeshData and MaterialData structs (host + device, no STL)
+│   └── devicePrograms.cu    OptiX device programs (raygen, miss) — compiled to PTX
 └── src/
-    ├── main.cpp            Entry point
-    ├── Application.h       Application class declaration
-    └── Application.cpp     Window init, CUDA/OptiX init, per-frame render loop
+    ├── main.cpp             Entry point
+    ├── Application.h/.cpp   Window, CUDA/OptiX init, ImGui UI, per-frame loop
+    ├── Scene.h/.cpp         Scene container: owns meshes, materials, and textures
+    ├── Mesh.h               Host-side mesh: separate vertex attribute arrays
+    ├── Texture.h            Host-side texture: raw RGBA pixels + dimensions
+    ├── SceneLoader.h/.cpp   glTF 2.0 loader (tinygltf); populates a Scene from file
+    └── CMakeLists.txt       Executable target, include paths, link libraries
 ```
 
 ## Troubleshooting
