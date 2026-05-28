@@ -12,6 +12,8 @@
 #include "LaunchParams.h"
 #include "Scene.h"
 
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -79,6 +81,31 @@ private:
 
     std::string m_sceneFilePath;  // empty = no scene loaded
     std::string m_loadError;      // empty = no error
+
+    // GPU device info — queried once in initCuda()
+    std::string   m_deviceName;
+    int           m_deviceComputeMajor = 0;
+    int           m_deviceComputeMinor = 0;
+    std::uint64_t m_deviceMemoryMB     = 0;
+
+    // Frame timing — updated at the top of each tick()
+    std::chrono::steady_clock::time_point m_frameStart;
+    float m_frameTimeMs = 0.f;  // exponential moving average of per-frame duration
+
+    // Free-fly camera state — the scene camera matrix is rebuilt from these each frame
+    float3 m_camPos    = { 0.f, 0.f, 3.f };
+    float  m_camYaw    = 0.f;     // radians, rotation around world Y; 0 = facing -Z
+    float  m_camPitch  = 0.f;     // radians, tilt around camera X; positive = look up
+    float  m_moveSpeed = 5.f;     // world units / second (WASD)
+    float  m_rotSpeed  = 0.003f;  // radians / pixel (RMB drag)
+
+    // Raw input state carried across frames
+    double m_prevMouseX      = 0.0;
+    double m_prevMouseY      = 0.0;
+    bool   m_prevRmb         = false;  // right mouse button state last frame
+    bool   m_viewportHovered = false;  // ImGui hover flag (set during Viewport panel)
+
+    void updateCamera();  // process input, rebuild scene camera matrix
 };
 
 #endif // OPTIX_RAYTRACER_APPLICATION_H

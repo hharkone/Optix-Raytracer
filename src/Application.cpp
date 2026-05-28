@@ -184,6 +184,15 @@ void Application::initCuda()
 {
     // Force CUDA runtime initialisation on device 0
     CUDA_CHECK(cudaFree(nullptr));
+
+    // Query device properties for the performance stats display
+    cudaDeviceProp prop = {};
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+    m_deviceName         = prop.name;
+    m_deviceComputeMajor = prop.major;
+    m_deviceComputeMinor = prop.minor;
+    m_deviceMemoryMB     = static_cast<std::uint64_t>(prop.totalGlobalMem)
+                           / (1024ULL * 1024ULL);
 }
 
 void Application::optixLogCallback(unsigned int level,
@@ -468,6 +477,114 @@ void Application::loadScene(const std::string& path)
     }
 
     buildSbt();  // rebuild with new mesh count (0 if load failed or no geometry)
+
+    // Sync fly-camera state from the newly loaded (or default) scene camera so
+    // movement immediately continues from the correct position and orientation.
+    {
+        const Camera& cam = m_scene->camera();
+        m_camPos.x = cam.transform.m[0][3];
+        m_camPos.y = cam.transform.m[1][3];
+        m_camPos.z = cam.transform.m[2][3];
+
+        // Forward = -column2 of the camera-to-world matrix
+        const float fx = -cam.transform.m[0][2];
+        const float fy = -cam.transform.m[1][2];
+        const float fz = -cam.transform.m[2][2];
+        const float fLen = std::max(1e-6f, sqrtf(fx*fx + fy*fy + fz*fz));
+        m_camPitch = asinf(std::max(-1.f, std::min(1.f, fy / fLen)));
+        m_camYaw   = atan2f(fx / fLen, -(fz / fLen));
+    }
+}
+
+// ─── Camera controller ───────────────────────────────────────────────────────
+
+void Application::updateCamera()
+{
+    ImGuiIO& io = ImGui::GetIO();
+
+    // ── Mouse delta ───────────────────────────────────────────────────────────
+    double mouseX, mouseY;
+    glfwGetCursorPos(m_window, &mouseX, &mouseY);
+    const float dx = static_cast<float>(mouseX - m_prevMouseX);
+    const float dy = static_cast<float>(mouseY - m_prevMouseY);
+    m_prevMouseX = mouseX;
+    m_prevMouseY = mouseY;
+
+    const bool rmb          = glfwGetMouseButton(m_window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    const bool rmbFirstFrame = rmb && !m_prevRmb;  // true only on the press event
+    m_prevRmb = rmb;
+
+    // ── Rotation — right-drag while the Viewport panel is under the cursor ────
+    // rmbFirstFrame is skipped to avoid a position-jump on the first drag frame.
+    if (rmb && !rmbFirstFrame && m_viewportHovered)
+    {
+        m_camYaw   += dx * m_rotSpeed;
+        m_camPitch -= dy * m_rotSpeed;
+
+        // Clamp pitch to just under ±90° to avoid gimbal singularity
+        const float kPitchLimit = 1.5533430f;  // 89 degrees in radians
+        m_camPitch = std::max(-kPitchLimit, std::min(kPitchLimit, m_camPitch));
+    }
+
+    // ── Translation — WASD in camera space ───────────────────────────────────
+    if (!io.WantCaptureKeyboard)
+    {
+        // dt clamped so an initial stall frame doesn't teleport the camera
+        const float dt   = std::max(0.001f, std::min(m_frameTimeMs * 0.001f, 0.1f));
+        const float dist = m_moveSpeed * dt;
+
+        const float sy = sinf(m_camYaw),   cy = cosf(m_camYaw);
+        const float sp = sinf(m_camPitch),  cp = cosf(m_camPitch);
+
+        // forward = direction the camera looks, right = camera's local +X, up = camera's local +Y
+        const float3 forward = {  sy*cp,  sp, -cy*cp };
+        const float3 right   = {  cy,    0.f,  sy    };
+        const float3 up      = { -sy*sp,  cp,  cy*sp };
+
+        const bool wKey = glfwGetKey(m_window, GLFW_KEY_W) == GLFW_PRESS;
+        const bool sKey = glfwGetKey(m_window, GLFW_KEY_S) == GLFW_PRESS;
+        const bool aKey = glfwGetKey(m_window, GLFW_KEY_A) == GLFW_PRESS;
+        const bool dKey = glfwGetKey(m_window, GLFW_KEY_D) == GLFW_PRESS;
+        const bool eKey = glfwGetKey(m_window, GLFW_KEY_E) == GLFW_PRESS;
+        const bool qKey = glfwGetKey(m_window, GLFW_KEY_Q) == GLFW_PRESS;
+
+        if (wKey || sKey)
+        {
+            const float fwd = wKey ? dist : -dist;
+            m_camPos.x += forward.x * fwd;
+            m_camPos.y += forward.y * fwd;
+            m_camPos.z += forward.z * fwd;
+        }
+        if (aKey || dKey)
+        {
+            const float strafe = dKey ? dist : -dist;
+            m_camPos.x += right.x * strafe;
+            m_camPos.z += right.z * strafe;
+        }
+        if (eKey || qKey)
+        {
+            const float lift = eKey ? dist : -dist;
+            m_camPos.x += up.x * lift;
+            m_camPos.y += up.y * lift;
+            m_camPos.z += up.z * lift;
+        }
+    }
+
+    // ── Rebuild camera-to-world matrix ────────────────────────────────────────
+    // Row-major Matrix4x4, columns are world-space camera axes:
+    //   col 0 = right   = {cy,      0,     sy    }
+    //   col 1 = up      = {-sy*sp,  cp,    cy*sp }
+    //   col 2 = +Z cam  = {-sy*cp, -sp,    cy*cp } (camera looks down -Z)
+    //   col 3 = pos
+    const float sy = sinf(m_camYaw),   cy = cosf(m_camYaw);
+    const float sp = sinf(m_camPitch),  cp = cosf(m_camPitch);
+
+    Camera cam = m_scene->camera();
+    cam.transform.m[0][0] =  cy;     cam.transform.m[0][1] = -sy*sp;  cam.transform.m[0][2] = -sy*cp;  cam.transform.m[0][3] = m_camPos.x;
+    cam.transform.m[1][0] = 0.f;     cam.transform.m[1][1] =  cp;     cam.transform.m[1][2] = -sp;     cam.transform.m[1][3] = m_camPos.y;
+    cam.transform.m[2][0] =  sy;     cam.transform.m[2][1] =  cy*sp;  cam.transform.m[2][2] =  cy*cp;  cam.transform.m[2][3] = m_camPos.z;
+    cam.transform.m[3][0] = 0.f;     cam.transform.m[3][1] = 0.f;     cam.transform.m[3][2] = 0.f;     cam.transform.m[3][3] = 1.f;
+    m_scene->setCamera(std::move(cam));
 }
 
 // ─── Per-frame ────────────────────────────────────────────────────────────────
@@ -479,11 +596,35 @@ bool Application::tick()
         return false;
     }
 
+    // ── Frame timing ──────────────────────────────────────────────────────────
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (m_frameTimeMs > 0.f)
+        {
+            const float deltaMs = std::chrono::duration<float, std::milli>(
+                now - m_frameStart).count();
+            // Exponential moving average — α=0.1 keeps the display readable
+            m_frameTimeMs = 0.1f * deltaMs + 0.9f * m_frameTimeMs;
+        }
+        else if (m_frameStart != std::chrono::steady_clock::time_point{})
+        {
+            // Second frame: initialise with the first real measurement
+            m_frameTimeMs = std::chrono::duration<float, std::milli>(
+                now - m_frameStart).count();
+        }
+        m_frameStart = now;
+    }
+
     glfwPollEvents();
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    // Camera input is processed here — after NewFrame() so WantCaptureMouse /
+    // WantCaptureKeyboard are current, but before the GPU launch so this frame
+    // renders with the updated camera.
+    updateCamera();
 
     // Enable a full-window dockspace so panels can be docked to it
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(),
@@ -494,6 +635,9 @@ bool Application::tick()
     ImGui::Begin("Viewport", nullptr,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
+
+    // Record hover state for use in updateCamera() next frame
+    m_viewportHovered = ImGui::IsWindowHovered();
 
     {
         const ImVec2 regionSize = ImGui::GetContentRegionAvail();
@@ -588,6 +732,41 @@ bool Application::tick()
 
     // ── Raytracer panel ───────────────────────────────────────────────────────
     ImGui::Begin("Raytracer");
+
+    // ── Performance stats ─────────────────────────────────────────────────────
+    ImGui::Text("GPU: %s", m_deviceName.c_str());
+    ImGui::Text("     SM %d.%d  |  %llu MB VRAM",
+        m_deviceComputeMajor, m_deviceComputeMinor,
+        static_cast<unsigned long long>(m_deviceMemoryMB));
+    ImGui::Text("Resolution: %d x %d", m_viewportWidth, m_viewportHeight);
+
+    if (m_frameTimeMs > 0.f)
+    {
+        const float    fps      = 1000.f / m_frameTimeMs;
+        const double   raysPerS = static_cast<double>(m_viewportWidth)
+                                * static_cast<double>(m_viewportHeight) * fps;
+
+        ImGui::Text("Frame: %.2f ms  (%.0f fps)", m_frameTimeMs, fps);
+
+        if (raysPerS >= 1.0e9)
+        {
+            ImGui::Text("Rays: %.2f Grays/s", raysPerS * 1.0e-9);
+        }
+        else if (raysPerS >= 1.0e6)
+        {
+            ImGui::Text("Rays: %.2f Mrays/s", raysPerS * 1.0e-6);
+        }
+        else
+        {
+            ImGui::Text("Rays: %.2f Krays/s", raysPerS * 1.0e-3);
+        }
+    }
+    else
+    {
+        ImGui::TextDisabled("Frame: --");
+    }
+
+    ImGui::Separator();
 
     if (ImGui::Button("Open glTF..."))
     {
