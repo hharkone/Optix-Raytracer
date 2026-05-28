@@ -2,6 +2,8 @@ add_executable(OptixRaytracer
     main.cpp
     Application.h
     Application.cpp
+    Accel.h
+    Accel.cpp
     Camera.h
     Scene.h
     Scene.cpp
@@ -48,5 +50,5 @@ target_link_options(OptixRaytracer PRIVATE
 target_compile_definitions(OptixRaytracer PRIVATE NOMINMAX)
 
 # Visual Studio source groups for cleaner Solution Explorer layout
-source_group("Source Files" FILES main.cpp Application.cpp Scene.cpp SceneLoader.cpp)
-source_group("Header Files" FILES Application.h Camera.h Scene.h SceneLoader.h Mesh.h Texture.h)
+source_group("Source Files" FILES main.cpp Application.cpp Accel.cpp Scene.cpp SceneLoader.cpp)
+source_group("Header Files" FILES Application.h Accel.h Camera.h Scene.h SceneLoader.h Mesh.h Texture.h)

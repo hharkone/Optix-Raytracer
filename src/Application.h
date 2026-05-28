@@ -8,6 +8,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include "Accel.h"
 #include "LaunchParams.h"
 #include "Scene.h"
 
@@ -31,6 +32,7 @@ private:
     OptixDeviceContext m_optixContext   = nullptr;
 
     std::unique_ptr<Scene> m_scene;
+    std::unique_ptr<Accel> m_accel;  // null = no scene loaded or AS not yet built
 
     // Framebuffer — filled by device programs, displayed via OpenGL texture
     uchar4*      d_colorBuffer   = nullptr;  // CUDA device buffer

@@ -209,11 +209,27 @@ void Application::resizeFramebuffer(int w, int h)
 void Application::loadScene(const std::string& path)
 {
     m_scene->clear();
+    m_accel.reset();
     m_loadError.clear();
     m_sceneFilePath.clear();
+
     if (loadGltfFile(path, *m_scene, m_loadError))
     {
         m_sceneFilePath = path;
+
+        if (!m_scene->empty())
+        {
+            try
+            {
+                m_accel = std::make_unique<Accel>();
+                m_accel->build(m_optixContext, *m_scene);
+            }
+            catch (const std::exception& e)
+            {
+                m_loadError = std::string("AS build failed: ") + e.what();
+                m_accel.reset();
+            }
+        }
     }
     else
     {
@@ -333,6 +349,20 @@ bool Application::tick()
         cam.transform.m[1][3],
         cam.transform.m[2][3]);
     ImGui::Text("FOV: %.1f deg", cam.yFov * (180.f / 3.14159265f));
+
+    ImGui::Separator();
+    if (m_accel && m_accel->valid())
+    {
+        ImGui::TextColored(ImVec4(0.3f, 1.f, 0.4f, 1.f), "AS: ready");
+    }
+    else if (!m_scene->empty())
+    {
+        ImGui::TextDisabled("AS: build failed");
+    }
+    else
+    {
+        ImGui::TextDisabled("AS: no geometry");
+    }
 
     ImGui::End();
 
