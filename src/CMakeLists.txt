@@ -6,6 +6,8 @@ add_executable(OptixRaytracer
     Scene.cpp
     Mesh.h
     Texture.h
+    SceneLoader.h
+    SceneLoader.cpp
 )
 
 target_include_directories(OptixRaytracer PRIVATE
@@ -20,6 +22,7 @@ target_link_libraries(OptixRaytracer PRIVATE
     glad
     glfw
     imgui
+    tinygltf
 )
 
 # Ensure PTX is (re)built whenever source shaders change
@@ -41,5 +44,5 @@ target_link_options(OptixRaytracer PRIVATE
 )
 
 # Visual Studio source groups for cleaner Solution Explorer layout
-source_group("Source Files" FILES main.cpp Application.cpp)
-source_group("Header Files" FILES Application.h)
+source_group("Source Files" FILES main.cpp Application.cpp Scene.cpp SceneLoader.cpp)
+source_group("Header Files" FILES Application.h Scene.h SceneLoader.h Mesh.h Texture.h)

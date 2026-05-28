@@ -81,6 +81,17 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 target_compile_options(imgui PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W0>)
 
+# tinygltf v2.8.21 — glTF 2.0 loader (header-only; implementation defined in SceneLoader.cpp)
+FetchContent_Declare(tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        v2.8.21
+    GIT_SHALLOW    TRUE
+)
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_INSTALL              OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_HEADER_ONLY          ON  CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(tinygltf)
+
 # GLAD — pre-generated OpenGL 3.3 core function loader (committed to repo)
 add_subdirectory(extern/glad)
 

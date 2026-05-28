@@ -1,0 +1,316 @@
+// TINYGLTF_IMPLEMENTATION in exactly one TU — same pattern as optix_function_table_definition.h
+// in Application.cpp. STB_IMAGE_WRITE_IMPLEMENTATION is required even though we only load;
+// tinygltf's implementation block unconditionally includes both stb headers.
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <tiny_gltf.h>
+
+#include "SceneLoader.h"
+
+#include <filesystem>
+#include <cmath>
+#include <string>
+
+// ─── float3 host-side math helpers ───────────────────────────────────────────
+// cuda_runtime.h defines make_float3/make_float2/make_uint3 but NOT operator
+// overloads for float3 in host code — those live in CUDA sample helper headers
+// that are not part of the SDK install.
+
+static float3 f3Sub(float3 a, float3 b)
+{
+    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+static float3 f3Cross(float3 a, float3 b)
+{
+    return make_float3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x);
+}
+
+static float3 f3Normalize(float3 v)
+{
+    const float len = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (len < 1e-8f)
+        return make_float3(0.f, 1.f, 0.f);  // degenerate triangle → arbitrary up
+    return make_float3(v.x / len, v.y / len, v.z / len);
+}
+
+// ─── Accessor helpers ─────────────────────────────────────────────────────────
+
+static const uint8_t* accessorBase(
+    const tinygltf::Model& model,
+    int                    accessorIndex,
+    size_t&                count,
+    size_t&                byteStride)
+{
+    const tinygltf::Accessor&   acc = model.accessors[accessorIndex];
+    const tinygltf::BufferView& bv  = model.bufferViews[acc.bufferView];
+    count      = acc.count;
+    byteStride = bv.byteStride;  // 0 means tightly packed
+    return model.buffers[bv.buffer].data.data() + bv.byteOffset + acc.byteOffset;
+}
+
+static void readVec3Accessor(
+    const tinygltf::Model& model,
+    int                    accessorIndex,
+    std::vector<float3>&   out)
+{
+    size_t count = 0, stride = 0;
+    const uint8_t* base = accessorBase(model, accessorIndex, count, stride);
+    if (stride == 0)
+        stride = sizeof(float) * 3;
+
+    out.resize(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const float* src = reinterpret_cast<const float*>(base + i * stride);
+        out[i] = make_float3(src[0], src[1], src[2]);
+    }
+}
+
+static void readVec2Accessor(
+    const tinygltf::Model& model,
+    int                    accessorIndex,
+    std::vector<float2>&   out)
+{
+    size_t count = 0, stride = 0;
+    const uint8_t* base = accessorBase(model, accessorIndex, count, stride);
+    if (stride == 0)
+        stride = sizeof(float) * 2;
+
+    out.resize(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const float* src = reinterpret_cast<const float*>(base + i * stride);
+        out[i] = make_float2(src[0], src[1]);
+    }
+}
+
+static void readIndexAccessor(
+    const tinygltf::Model& model,
+    int                    accessorIndex,
+    std::vector<uint3>&    out)
+{
+    const tinygltf::Accessor&   acc = model.accessors[accessorIndex];
+    const tinygltf::BufferView& bv  = model.bufferViews[acc.bufferView];
+    const uint8_t* base = model.buffers[bv.buffer].data.data()
+                        + bv.byteOffset + acc.byteOffset;
+    const size_t triCount = acc.count / 3;
+    out.resize(triCount);
+
+    for (size_t tri = 0; tri < triCount; ++tri)
+    {
+        uint32_t i0, i1, i2;
+        if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+        {
+            i0 = base[tri * 3 + 0];
+            i1 = base[tri * 3 + 1];
+            i2 = base[tri * 3 + 2];
+        }
+        else if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+        {
+            const uint16_t* p = reinterpret_cast<const uint16_t*>(base) + tri * 3;
+            i0 = p[0]; i1 = p[1]; i2 = p[2];
+        }
+        else
+        {
+            const uint32_t* p = reinterpret_cast<const uint32_t*>(base) + tri * 3;
+            i0 = p[0]; i1 = p[1]; i2 = p[2];
+        }
+        out[tri] = make_uint3(i0, i1, i2);
+    }
+}
+
+// ─── Normals ──────────────────────────────────────────────────────────────────
+
+static void generateFlatNormals(Mesh& mesh)
+{
+    mesh.normals.resize(mesh.positions.size(), make_float3(0.f, 0.f, 0.f));
+    for (const uint3& tri : mesh.indices)
+    {
+        const float3 e0 = f3Sub(mesh.positions[tri.y], mesh.positions[tri.x]);
+        const float3 e1 = f3Sub(mesh.positions[tri.z], mesh.positions[tri.x]);
+        const float3 n  = f3Normalize(f3Cross(e0, e1));
+        mesh.normals[tri.x] = n;
+        mesh.normals[tri.y] = n;
+        mesh.normals[tri.z] = n;
+    }
+}
+
+// ─── Image loading ────────────────────────────────────────────────────────────
+
+static void loadImage(const tinygltf::Image& gltfImage, Scene& outScene)
+{
+    Texture tex;
+    tex.name     = gltfImage.name.empty() ? gltfImage.uri : gltfImage.name;
+    tex.width    = gltfImage.width;
+    tex.height   = gltfImage.height;
+    tex.channels = 4;
+
+    if (gltfImage.component == 3)
+    {
+        const size_t pixelCount =
+            static_cast<size_t>(gltfImage.width) * gltfImage.height;
+        tex.pixels.resize(pixelCount * 4);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            tex.pixels[i * 4 + 0] = gltfImage.image[i * 3 + 0];
+            tex.pixels[i * 4 + 1] = gltfImage.image[i * 3 + 1];
+            tex.pixels[i * 4 + 2] = gltfImage.image[i * 3 + 2];
+            tex.pixels[i * 4 + 3] = 255;
+        }
+    }
+    else
+    {
+        tex.pixels = gltfImage.image;
+    }
+
+    outScene.addTexture(std::move(tex));
+}
+
+// ─── Material loading ─────────────────────────────────────────────────────────
+
+static MaterialData buildMaterial(
+    const tinygltf::Material& gltfMat,
+    const tinygltf::Model&    model,
+    int                       textureOffset)
+{
+    MaterialData mat;
+    const tinygltf::PbrMetallicRoughness& pbr = gltfMat.pbrMetallicRoughness;
+
+    if (pbr.baseColorFactor.size() == 4)
+    {
+        mat.albedo = make_float3(
+            static_cast<float>(pbr.baseColorFactor[0]),
+            static_cast<float>(pbr.baseColorFactor[1]),
+            static_cast<float>(pbr.baseColorFactor[2]));
+    }
+
+    mat.roughness = static_cast<float>(pbr.roughnessFactor);
+    mat.metallic  = static_cast<float>(pbr.metallicFactor);
+
+    if (pbr.baseColorTexture.index >= 0)
+    {
+        const int imageIdx = model.textures[pbr.baseColorTexture.index].source;
+        if (imageIdx >= 0)
+            mat.albedoTexture = textureOffset + imageIdx;
+    }
+
+    if (gltfMat.emissiveFactor.size() == 3)
+    {
+        mat.emission = make_float3(
+            static_cast<float>(gltfMat.emissiveFactor[0]),
+            static_cast<float>(gltfMat.emissiveFactor[1]),
+            static_cast<float>(gltfMat.emissiveFactor[2]));
+    }
+
+    return mat;
+}
+
+// ─── Mesh loading ─────────────────────────────────────────────────────────────
+
+static void loadMesh(
+    const tinygltf::Mesh&  gltfMesh,
+    const tinygltf::Model& model,
+    int                    materialOffset,
+    Scene&                 outScene)
+{
+    for (size_t primIdx = 0; primIdx < gltfMesh.primitives.size(); ++primIdx)
+    {
+        const tinygltf::Primitive& prim = gltfMesh.primitives[primIdx];
+
+        if (prim.mode != TINYGLTF_MODE_TRIANGLES)
+            continue;
+
+        auto posIt = prim.attributes.find("POSITION");
+        if (posIt == prim.attributes.end())
+            continue;
+
+        Mesh mesh;
+        mesh.name = (gltfMesh.primitives.size() == 1)
+            ? gltfMesh.name
+            : gltfMesh.name + "_" + std::to_string(primIdx);
+
+        readVec3Accessor(model, posIt->second, mesh.positions);
+
+        auto normIt = prim.attributes.find("NORMAL");
+        if (normIt != prim.attributes.end())
+            readVec3Accessor(model, normIt->second, mesh.normals);
+
+        auto uvIt = prim.attributes.find("TEXCOORD_0");
+        if (uvIt != prim.attributes.end())
+            readVec2Accessor(model, uvIt->second, mesh.uvs);
+
+        if (prim.indices >= 0)
+        {
+            readIndexAccessor(model, prim.indices, mesh.indices);
+        }
+        else
+        {
+            const size_t vertCount = mesh.positions.size();
+            mesh.indices.reserve(vertCount / 3);
+            for (size_t i = 0; i + 2 < vertCount; i += 3)
+            {
+                mesh.indices.push_back(make_uint3(
+                    static_cast<uint32_t>(i),
+                    static_cast<uint32_t>(i + 1),
+                    static_cast<uint32_t>(i + 2)));
+            }
+        }
+
+        if (mesh.normals.empty())
+            generateFlatNormals(mesh);
+
+        if (mesh.uvs.empty())
+            mesh.uvs.resize(mesh.positions.size(), make_float2(0.f, 0.f));
+
+        mesh.materialIndex = (prim.material >= 0)
+            ? materialOffset + prim.material
+            : materialOffset;
+
+        outScene.addMesh(std::move(mesh));
+    }
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+bool loadGltfFile(const std::string& path, Scene& outScene, std::string& outError)
+{
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model    model;
+    std::string        err;
+    std::string        warn;
+
+    const bool isBinary =
+        std::filesystem::path(path).extension().string() == ".glb";
+
+    const bool ok = isBinary
+        ? loader.LoadBinaryFromFile(&model, &err, &warn, path)
+        : loader.LoadASCIIFromFile(&model, &err, &warn, path);
+
+    if (!ok)
+    {
+        outError = err.empty() ? "tinygltf: unknown error loading " + path : err;
+        return false;
+    }
+
+    const int materialOffset = static_cast<int>(outScene.materials().size());
+    const int textureOffset  = static_cast<int>(outScene.textures().size());
+
+    for (const tinygltf::Image& img : model.images)
+        loadImage(img, outScene);
+
+    for (const tinygltf::Material& mat : model.materials)
+        outScene.addMaterial(buildMaterial(mat, model, textureOffset), mat.name);
+
+    if (model.materials.empty())
+        outScene.addMaterial(MaterialData{}, "default");
+
+    for (const tinygltf::Mesh& gltfMesh : model.meshes)
+        loadMesh(gltfMesh, model, materialOffset, outScene);
+
+    return true;
+}
