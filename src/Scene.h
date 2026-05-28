@@ -29,6 +29,7 @@ public:
     const std::vector<Texture>&      textures()                 const;
     const std::string&               materialName(int index)    const;
 
+    void clear();        // remove all meshes, materials, and textures
     bool empty() const;  // true when there are no meshes
 
 private:

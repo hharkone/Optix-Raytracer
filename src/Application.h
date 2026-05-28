@@ -42,10 +42,15 @@ private:
     void initCuda();
     void initOptix();
 
+    void loadScene(const std::string& path);
+
     static void optixLogCallback(unsigned int level,
                                  const char*  tag,
                                  const char*  message,
                                  void*        cbdata);
+
+    std::string m_sceneFilePath;  // empty = no scene loaded
+    std::string m_loadError;      // empty = no error
 };
 
 #endif // OPTIX_RAYTRACER_APPLICATION_H

@@ -15,6 +15,10 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include <nfd.h>
+#include "SceneLoader.h"
+
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -57,6 +61,7 @@ Application::Application(int width, int height, const std::string& title)
     h_colorBuffer = new uchar4[static_cast<size_t>(width) * height];
 
     m_scene = std::make_unique<Scene>();
+    NFD_Init();
 }
 
 Application::~Application()
@@ -73,6 +78,8 @@ Application::~Application()
         optixDeviceContextDestroy(m_optixContext);
         m_optixContext = nullptr;
     }
+
+    NFD_Quit();
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -152,6 +159,19 @@ void Application::initOptix()
     OPTIX_CHECK(optixDeviceContextCreate(cuCtx, &opts, &m_optixContext));
 }
 
+// ─── Scene loading ────────────────────────────────────────────────────────────
+
+void Application::loadScene(const std::string& path)
+{
+    m_scene->clear();
+    m_loadError.clear();
+    m_sceneFilePath.clear();
+    if (loadGltfFile(path, *m_scene, m_loadError))
+        m_sceneFilePath = path;
+    else
+        m_scene->clear();  // discard any partial data from a failed load
+}
+
 // ─── Per-frame ────────────────────────────────────────────────────────────────
 
 bool Application::tick()
@@ -170,11 +190,41 @@ bool Application::tick()
                                  ImGuiDockNodeFlags_PassthruCentralNode);
 
     ImGui::Begin("Raytracer");
-    ImGui::Text("Phase 2 — scene scaffold");
+
+    if (ImGui::Button("Open glTF..."))
+    {
+        nfdu8char_t*    outPath = nullptr;
+        nfdfilteritem_t filters[] = { { "glTF Scene", "gltf,glb" } };
+        if (NFD_OpenDialogU8(&outPath, filters, 1, nullptr) == NFD_OKAY)
+        {
+            loadScene(reinterpret_cast<const char*>(outPath));
+            NFD_FreePathU8(outPath);
+        }
+    }
+
+    if (!m_sceneFilePath.empty())
+    {
+        const std::string filename =
+            std::filesystem::path(m_sceneFilePath).filename().string();
+        ImGui::Text("Scene: %s", filename.c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", m_sceneFilePath.c_str());
+    }
+    else
+    {
+        ImGui::TextDisabled("No scene loaded");
+    }
+
+    if (!m_loadError.empty())
+        ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f),
+                           "Error: %s", m_loadError.c_str());
+
+    ImGui::Separator();
     ImGui::Text("Meshes: %d  Materials: %d  Textures: %d",
         static_cast<int>(m_scene->meshes().size()),
         static_cast<int>(m_scene->materials().size()),
         static_cast<int>(m_scene->textures().size()));
+
     ImGui::End();
 
     ImGui::Render();

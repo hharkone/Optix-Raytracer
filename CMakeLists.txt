@@ -92,6 +92,14 @@ set(TINYGLTF_INSTALL              OFF CACHE BOOL "" FORCE)
 set(TINYGLTF_HEADER_ONLY          ON  CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(tinygltf)
 
+# nativefiledialog-extended v1.2.1 — native OS file dialog (Open / Save)
+FetchContent_Declare(nfd
+    GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
+    GIT_TAG        v1.2.1
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nfd)
+
 # GLAD — pre-generated OpenGL 3.3 core function loader (committed to repo)
 add_subdirectory(extern/glad)
 

@@ -44,6 +44,14 @@ const std::string& Scene::materialName(int index) const
     return m_materialNames[index];
 }
 
+void Scene::clear()
+{
+    m_meshes.clear();
+    m_materials.clear();
+    m_materialNames.clear();
+    m_textures.clear();
+}
+
 bool Scene::empty() const
 {
     return m_meshes.empty();

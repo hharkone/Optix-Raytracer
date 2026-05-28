@@ -23,6 +23,7 @@ target_link_libraries(OptixRaytracer PRIVATE
     glfw
     imgui
     tinygltf
+    nfd
 )
 
 # Ensure PTX is (re)built whenever source shaders change
