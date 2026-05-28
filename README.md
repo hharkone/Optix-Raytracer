@@ -31,54 +31,53 @@ python -m glad --generator=c --profile=core --out-path=extern/glad --api="gl=3.3
 
 ## Building
 
-### Quick build (recommended)
+Two batch scripts are provided in the repository root:
 
-A `build.bat` script is provided in the repository root:
+| Script | Purpose |
+|---|---|
+| `configure.bat` | Generate (or refresh) the Visual Studio solution without building |
+| `build.bat` | Configure if needed, then compile from the command line |
+
+### Building from the command line
 
 ```bat
 build.bat          :: Debug build (configures automatically on first run)
 build.bat Release  :: Release build
 ```
 
-The script configures the CMake project on first run (requires internet access to fetch GLFW, ImGui, tinygltf, and nativefiledialog-extended), then builds. To reconfigure from scratch, delete `build\CMakeCache.txt` and run again.
+On first run the script fetches GLFW, ImGui, tinygltf, and nativefiledialog-extended from GitHub — internet access is required. To force a full reconfigure, delete `build\CMakeCache.txt` and run again.
 
-### Manual build
+### Building in Visual Studio
 
-#### 1. Configure (generate the VS2022 solution)
+Run `configure.bat` once to generate the solution:
 
-Open a **PowerShell** window in the repository root:
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+```bat
+configure.bat          :: Generate (or refresh) build\OptixRaytracer.sln
+configure.bat --clean  :: Wipe the CMake cache first, then regenerate
 ```
 
-If OptiX is not detected automatically (e.g., multiple SDK versions are installed):
+Then open `build\OptixRaytracer.sln` in Visual Studio 2022. **OptixRaytracer** is set as the startup project automatically, so pressing **F5** or **Ctrl+F5** runs it immediately.
+
+Re-run `configure.bat` whenever you add or remove source files, or change `CMakeLists.txt`. There is no need to run it before every build — Visual Studio detects when the project files are stale and prompts to reload them.
+
+### Manual CMake commands
+
+If you prefer to drive CMake directly:
 
 ```powershell
+# Configure
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+# If OptiX is not detected automatically (e.g. multiple SDK versions installed):
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
     -DOptiX_INSTALL_DIR="C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0"
-```
 
-CMake will:
-- Download GLFW, ImGui (docking branch), tinygltf, and nativefiledialog-extended from GitHub — internet access required on first configure
-- Compile GLAD from the committed source
-- Detect CUDA Toolkit and OptiX SDK automatically
-
-#### 2. Build
-
-```powershell
-cmake --build build --config Debug --parallel
-```
-
-For a release build:
-
-```powershell
+# Build
+cmake --build build --config Debug   --parallel
 cmake --build build --config Release --parallel
 ```
 
-Alternatively, open `build/OptixRaytracer.sln` in Visual Studio 2022 and build from there.
-
-### 3. Run
+### Run
 
 ```powershell
 .\build\bin\Debug\OptixRaytracer.exe
@@ -90,23 +89,26 @@ You should see a 1280×720 window with a dark background and a floating **Raytra
 
 ```
 Optix-Raytracer/
-├── CMakeLists.txt           Root build file: project settings, FetchContent, subdirs
+├── CMakeLists.txt               Root build file: project settings, FetchContent, subdirs
+├── build.bat                    Command-line build script (configures on first run)
+├── configure.bat                Generates / refreshes the Visual Studio solution
 ├── cmake/
-│   └── FindOptiX.cmake      Locates the OptiX SDK; creates the OptiX::OptiX target
+│   ├── FindOptiX.cmake          Locates the OptiX SDK; creates the OptiX::OptiX target
+│   └── cuda_intellisense.props.in  VS property sheet template: adds OptiX to IntelliSense
 ├── extern/
-│   └── glad/                Pre-generated OpenGL 3.3 core function loader
+│   └── glad/                    Pre-generated OpenGL 3.3 core function loader
 ├── shaders/
-│   ├── LaunchParams.h       LaunchParams struct shared between host and device code
-│   ├── SceneData.h          MeshData and MaterialData structs (host + device, no STL)
-│   └── devicePrograms.cu    OptiX device programs (raygen, miss) — compiled to PTX
+│   ├── LaunchParams.h           LaunchParams struct shared between host and device code
+│   ├── SceneData.h              MeshData and MaterialData structs (host + device, no STL)
+│   └── devicePrograms.cu        OptiX device programs (raygen, miss) — compiled to PTX
 └── src/
-    ├── main.cpp             Entry point
-    ├── Application.h/.cpp   Window, CUDA/OptiX init, ImGui UI, per-frame loop
-    ├── Scene.h/.cpp         Scene container: owns meshes, materials, and textures
-    ├── Mesh.h               Host-side mesh: separate vertex attribute arrays
-    ├── Texture.h            Host-side texture: raw RGBA pixels + dimensions
-    ├── SceneLoader.h/.cpp   glTF 2.0 loader (tinygltf); populates a Scene from file
-    └── CMakeLists.txt       Executable target, include paths, link libraries
+    ├── main.cpp                 Entry point
+    ├── Application.h/.cpp       Window, CUDA/OptiX init, ImGui UI, per-frame loop
+    ├── Scene.h/.cpp             Scene container: owns meshes, materials, and textures
+    ├── Mesh.h                   Host-side mesh: separate vertex attribute arrays
+    ├── Texture.h                Host-side texture: raw RGBA pixels + dimensions
+    ├── SceneLoader.h/.cpp       glTF 2.0 loader (tinygltf); populates a Scene from file
+    └── CMakeLists.txt           Executable target, include paths, link libraries
 ```
 
 ## Troubleshooting
