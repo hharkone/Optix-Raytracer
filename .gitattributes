@@ -1,2 +1,17 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalize all text files to LF in the repository and working tree.
+# eol=lf overrides core.autocrlf so Windows checkouts also get LF.
+* text=auto eol=lf
+
+# Binary files — never rewrite line endings
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.glb   binary
+*.bin   binary
+*.ptx   binary
+*.lib   binary
+*.dll   binary
+*.exe   binary
+*.pdf   binary

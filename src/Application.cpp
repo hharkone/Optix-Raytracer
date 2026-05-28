@@ -18,6 +18,7 @@
 #include <nfd.h>
 #include "SceneLoader.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -56,10 +57,6 @@ Application::Application(int width, int height, const std::string& title)
     initCuda();
     initOptix();
 
-    const size_t fbBytes = static_cast<size_t>(width) * height * sizeof(uchar4);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_colorBuffer), fbBytes));
-    h_colorBuffer = new uchar4[static_cast<size_t>(width) * height];
-
     m_scene = std::make_unique<Scene>();
     NFD_Init();
 }
@@ -80,6 +77,12 @@ Application::~Application()
     }
 
     NFD_Quit();
+
+    if (m_displayTexture)
+    {
+        glDeleteTextures(1, &m_displayTexture);
+        m_displayTexture = 0;
+    }
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -165,6 +168,42 @@ void Application::initOptix()
     OPTIX_CHECK(optixDeviceContextCreate(cuCtx, &opts, &m_optixContext));
 }
 
+// ─── Framebuffer ─────────────────────────────────────────────────────────────
+
+void Application::resizeFramebuffer(int w, int h)
+{
+    if (d_colorBuffer)
+    {
+        cudaFree(d_colorBuffer);
+        d_colorBuffer = nullptr;
+    }
+    delete[] h_colorBuffer;
+    h_colorBuffer = nullptr;
+
+    if (m_displayTexture)
+    {
+        glDeleteTextures(1, &m_displayTexture);
+        m_displayTexture = 0;
+    }
+
+    m_viewportWidth  = w;
+    m_viewportHeight = h;
+
+    const size_t byteCount = static_cast<size_t>(w) * h * sizeof(uchar4);
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_colorBuffer), byteCount));
+    h_colorBuffer = new uchar4[static_cast<size_t>(w) * h];
+
+    glGenTextures(1, &m_displayTexture);
+    glBindTexture(GL_TEXTURE_2D, m_displayTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 // ─── Scene loading ────────────────────────────────────────────────────────────
 
 void Application::loadScene(const std::string& path)
@@ -201,6 +240,51 @@ bool Application::tick()
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(),
                                  ImGuiDockNodeFlags_PassthruCentralNode);
 
+    // ── Viewport panel ────────────────────────────────────────────────────────
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+    ImGui::Begin("Viewport", nullptr,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+
+    {
+        const ImVec2 regionSize = ImGui::GetContentRegionAvail();
+        const int vpW = std::max(1, static_cast<int>(regionSize.x));
+        const int vpH = std::max(1, static_cast<int>(regionSize.y));
+
+        if (vpW != m_viewportWidth || vpH != m_viewportHeight)
+        {
+            resizeFramebuffer(vpW, vpH);
+        }
+
+        // Placeholder: CPU UV gradient — replace with OptiX launch + cudaMemcpy later
+        for (int y = 0; y < m_viewportHeight; ++y)
+        {
+            for (int x = 0; x < m_viewportWidth; ++x)
+            {
+                h_colorBuffer[y * m_viewportWidth + x] = {
+                    static_cast<unsigned char>(255 * x / m_viewportWidth),
+                    static_cast<unsigned char>(255 * y / m_viewportHeight),
+                    128,
+                    255
+                };
+            }
+        }
+
+        glBindTexture(GL_TEXTURE_2D, m_displayTexture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+            m_viewportWidth, m_viewportHeight,
+            GL_RGBA, GL_UNSIGNED_BYTE, h_colorBuffer);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        ImGui::Image(
+            (ImTextureID)(intptr_t)m_displayTexture,
+            ImVec2(static_cast<float>(m_viewportWidth),
+                   static_cast<float>(m_viewportHeight)));
+    }
+
+    ImGui::End();
+
+    // ── Raytracer panel ───────────────────────────────────────────────────────
     ImGui::Begin("Raytracer");
 
     if (ImGui::Button("Open glTF..."))

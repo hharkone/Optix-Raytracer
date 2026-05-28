@@ -33,14 +33,18 @@ private:
     std::unique_ptr<Scene> m_scene;
 
     // Framebuffer — filled by device programs, displayed via OpenGL texture
-    uchar4*            d_colorBuffer   = nullptr;
-    uchar4*            h_colorBuffer   = nullptr;
+    uchar4*      d_colorBuffer   = nullptr;  // CUDA device buffer
+    uchar4*      h_colorBuffer   = nullptr;  // host staging buffer
+    unsigned int m_displayTexture = 0;       // GL_RGBA8 texture (GLuint)
+    int          m_viewportWidth  = 0;       // current framebuffer dimensions
+    int          m_viewportHeight = 0;       // driven by the Viewport panel size
 
     void initWindow(const std::string& title);
     void initOpenGL();
     void initImGui();
     void initCuda();
     void initOptix();
+    void resizeFramebuffer(int w, int h);
 
     void loadScene(const std::string& path);
 
