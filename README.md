@@ -31,7 +31,20 @@ python -m glad --generator=c --profile=core --out-path=extern/glad --api="gl=3.3
 
 ## Building
 
-### 1. Configure (generate the VS2022 solution)
+### Quick build (recommended)
+
+A `build.bat` script is provided in the repository root:
+
+```bat
+build.bat          :: Debug build (configures automatically on first run)
+build.bat Release  :: Release build
+```
+
+The script configures the CMake project on first run (requires internet access to fetch GLFW, ImGui, tinygltf, and nativefiledialog-extended), then builds. To reconfigure from scratch, delete `build\CMakeCache.txt` and run again.
+
+### Manual build
+
+#### 1. Configure (generate the VS2022 solution)
 
 Open a **PowerShell** window in the repository root:
 
@@ -51,7 +64,7 @@ CMake will:
 - Compile GLAD from the committed source
 - Detect CUDA Toolkit and OptiX SDK automatically
 
-### 2. Build
+#### 2. Build
 
 ```powershell
 cmake --build build --config Debug --parallel

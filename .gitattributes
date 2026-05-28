@@ -2,6 +2,9 @@
 # eol=lf overrides core.autocrlf so Windows checkouts also get LF.
 * text=auto eol=lf
 
+# Windows batch files must use CRLF — cmd.exe does not handle LF-only .bat files
+*.bat text eol=crlf
+
 # Binary files — never rewrite line endings
 *.png   binary
 *.jpg   binary
