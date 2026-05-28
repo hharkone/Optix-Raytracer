@@ -1,6 +1,7 @@
 #ifndef OPTIX_RAYTRACER_SCENE_H
 #define OPTIX_RAYTRACER_SCENE_H
 
+#include "Camera.h"
 #include "Mesh.h"
 #include "Texture.h"
 #include "SceneData.h"  // MaterialData — shared with device code; on include path via CMake
@@ -29,7 +30,10 @@ public:
     const std::vector<Texture>&      textures()                 const;
     const std::string&               materialName(int index)    const;
 
-    void clear();        // remove all meshes, materials, and textures
+    const Camera& camera()             const;
+    void          setCamera(Camera camera);
+
+    void clear();        // remove all meshes, materials, textures, and reset camera to default
     bool empty() const;  // true when there are no meshes
 
 private:
@@ -37,6 +41,7 @@ private:
     std::vector<MaterialData> m_materials;
     std::vector<std::string>  m_materialNames;  // parallel to m_materials
     std::vector<Texture>      m_textures;
+    Camera                    m_camera = Camera::makeDefault();
 };
 
 #endif // OPTIX_RAYTRACER_SCENE_H

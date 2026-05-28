@@ -46,12 +46,23 @@ const std::string& Scene::materialName(int index) const
     return m_materialNames[index];
 }
 
+const Camera& Scene::camera() const
+{
+    return m_camera;
+}
+
+void Scene::setCamera(Camera camera)
+{
+    m_camera = std::move(camera);
+}
+
 void Scene::clear()
 {
     m_meshes.clear();
     m_materials.clear();
     m_materialNames.clear();
     m_textures.clear();
+    m_camera = Camera::makeDefault();
 }
 
 bool Scene::empty() const

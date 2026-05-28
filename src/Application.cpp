@@ -325,6 +325,15 @@ bool Application::tick()
         static_cast<int>(m_scene->materials().size()),
         static_cast<int>(m_scene->textures().size()));
 
+    ImGui::Separator();
+    const Camera& cam = m_scene->camera();
+    ImGui::Text("Camera: %s", cam.name.c_str());
+    ImGui::Text("Position: (%.2f, %.2f, %.2f)",
+        cam.transform.m[0][3],
+        cam.transform.m[1][3],
+        cam.transform.m[2][3]);
+    ImGui::Text("FOV: %.1f deg", cam.yFov * (180.f / 3.14159265f));
+
     ImGui::End();
 
     ImGui::Render();

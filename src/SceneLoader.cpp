@@ -12,6 +12,150 @@
 #include <cmath>
 #include <string>
 
+// ─── Matrix4x4 helpers ────────────────────────────────────────────────────────
+
+static Matrix4x4 mat4Identity()
+{
+    Matrix4x4 m;
+    m.m[0][0] = m.m[1][1] = m.m[2][2] = m.m[3][3] = 1.f;
+    return m;
+}
+
+static Matrix4x4 mat4Multiply(const Matrix4x4& a, const Matrix4x4& b)
+{
+    Matrix4x4 r;
+    for (int row = 0; row < 4; ++row)
+    {
+        for (int col = 0; col < 4; ++col)
+        {
+            for (int k = 0; k < 4; ++k)
+            {
+                r.m[row][col] += a.m[row][k] * b.m[k][col];
+            }
+        }
+    }
+    return r;
+}
+
+// Inverse of a rigid-body transform (pure rotation + translation, no scale).
+// Uses the analytical shortcut: R^-1 = R^T, t^-1 = -R^T * t.
+static Matrix4x4 mat4RigidInverse(const Matrix4x4& m)
+{
+    Matrix4x4 inv;
+    for (int r = 0; r < 3; ++r)
+    {
+        for (int c = 0; c < 3; ++c)
+        {
+            inv.m[r][c] = m.m[c][r];  // transpose the 3x3 rotation block
+        }
+    }
+    const float tx = m.m[0][3], ty = m.m[1][3], tz = m.m[2][3];
+    inv.m[0][3] = -(inv.m[0][0]*tx + inv.m[0][1]*ty + inv.m[0][2]*tz);
+    inv.m[1][3] = -(inv.m[1][0]*tx + inv.m[1][1]*ty + inv.m[1][2]*tz);
+    inv.m[2][3] = -(inv.m[2][0]*tx + inv.m[2][1]*ty + inv.m[2][2]*tz);
+    inv.m[3][3] = 1.f;
+    return inv;
+}
+
+// Builds the node's local matrix from either the stored 4x4 or TRS values.
+// glTF matrices are column-major; we store row-major so we transpose on import.
+static Matrix4x4 gltfNodeLocalMatrix(const tinygltf::Node& node)
+{
+    if (node.matrix.size() == 16)
+    {
+        Matrix4x4 m;
+        for (int r = 0; r < 4; ++r)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                m.m[r][c] = static_cast<float>(node.matrix[c * 4 + r]);
+            }
+        }
+        return m;
+    }
+
+    float sx = 1.f, sy = 1.f, sz = 1.f;
+    if (node.scale.size() == 3)
+    {
+        sx = static_cast<float>(node.scale[0]);
+        sy = static_cast<float>(node.scale[1]);
+        sz = static_cast<float>(node.scale[2]);
+    }
+
+    float qx = 0.f, qy = 0.f, qz = 0.f, qw = 1.f;
+    if (node.rotation.size() == 4)
+    {
+        qx = static_cast<float>(node.rotation[0]);
+        qy = static_cast<float>(node.rotation[1]);
+        qz = static_cast<float>(node.rotation[2]);
+        qw = static_cast<float>(node.rotation[3]);
+    }
+
+    Matrix4x4 m = mat4Identity();
+    // Rotation from unit quaternion, columns scaled by S
+    m.m[0][0] = (1.f - 2.f*(qy*qy + qz*qz)) * sx;
+    m.m[0][1] = (2.f*(qx*qy - qz*qw))        * sy;
+    m.m[0][2] = (2.f*(qx*qz + qy*qw))        * sz;
+    m.m[1][0] = (2.f*(qx*qy + qz*qw))        * sx;
+    m.m[1][1] = (1.f - 2.f*(qx*qx + qz*qz)) * sy;
+    m.m[1][2] = (2.f*(qy*qz - qx*qw))        * sz;
+    m.m[2][0] = (2.f*(qx*qz - qy*qw))        * sx;
+    m.m[2][1] = (2.f*(qy*qz + qx*qw))        * sy;
+    m.m[2][2] = (1.f - 2.f*(qx*qx + qy*qy)) * sz;
+
+    if (node.translation.size() == 3)
+    {
+        m.m[0][3] = static_cast<float>(node.translation[0]);
+        m.m[1][3] = static_cast<float>(node.translation[1]);
+        m.m[2][3] = static_cast<float>(node.translation[2]);
+    }
+    return m;
+}
+
+// Recursively searches the node subtree for the first node with a camera.
+// Accumulates the parent-to-world transform as it descends.
+static bool findCameraNode(
+    const tinygltf::Model& model,
+    int                    nodeIdx,
+    const Matrix4x4&       parentWorld,
+    Camera&                outCamera)
+{
+    const tinygltf::Node& node = model.nodes[nodeIdx];
+    const Matrix4x4 world = mat4Multiply(parentWorld, gltfNodeLocalMatrix(node));
+
+    if (node.camera >= 0)
+    {
+        const tinygltf::Camera& gc = model.cameras[node.camera];
+        outCamera.name      = node.name.empty() ? gc.name : node.name;
+        outCamera.transform = world;
+        outCamera.view      = mat4RigidInverse(world);
+
+        if (gc.type == "perspective")
+        {
+            outCamera.yFov = static_cast<float>(gc.perspective.yfov);
+            if (gc.perspective.aspectRatio > 0.0)
+            {
+                outCamera.aspectRatio = static_cast<float>(gc.perspective.aspectRatio);
+            }
+            outCamera.zNear = static_cast<float>(gc.perspective.znear);
+            if (gc.perspective.zfar > 0.0)
+            {
+                outCamera.zFar = static_cast<float>(gc.perspective.zfar);
+            }
+        }
+        return true;
+    }
+
+    for (int child : node.children)
+    {
+        if (findCameraNode(model, child, world, outCamera))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ─── float3 host-side math helpers ───────────────────────────────────────────
 // cuda_runtime.h defines make_float3/make_float2/make_uint3 but NOT operator
 // overloads for float3 in host code — those live in CUDA sample helper headers
@@ -333,6 +477,22 @@ bool loadGltfFile(const std::string& path, Scene& outScene, std::string& outErro
 
     for (const tinygltf::Mesh& gltfMesh : model.meshes)
         loadMesh(gltfMesh, model, materialOffset, outScene);
+
+    // Camera — walk the default scene's node tree; keep Scene's default if none found
+    if (!model.scenes.empty())
+    {
+        const int sceneIdx = (model.defaultScene >= 0) ? model.defaultScene : 0;
+        Camera importedCamera;
+        const Matrix4x4 identity = mat4Identity();
+        for (int rootNode : model.scenes[sceneIdx].nodes)
+        {
+            if (findCameraNode(model, rootNode, identity, importedCamera))
+            {
+                outScene.setCamera(importedCamera);
+                break;
+            }
+        }
+    }
 
     return true;
 }
