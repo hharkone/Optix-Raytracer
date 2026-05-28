@@ -2,7 +2,8 @@
 // Included by both Application.cpp and devicePrograms.cu.
 // Must use only types valid in both C++17 and CUDA device code:
 // no STL, no windows.h, no host-only headers.
-#pragma once
+#ifndef OPTIX_RAYTRACER_LAUNCH_PARAMS_H
+#define OPTIX_RAYTRACER_LAUNCH_PARAMS_H
 
 #include <optix.h>         // OptixTraversableHandle
 #include <cuda_runtime.h>  // uchar4, uint2
@@ -12,3 +13,5 @@ struct LaunchParams {
     uint2                 fbSize;        // { width, height } in pixels
     OptixTraversableHandle traversable;  // top-level IAS (populated later)
 };
+
+#endif // OPTIX_RAYTRACER_LAUNCH_PARAMS_H

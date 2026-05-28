@@ -1,4 +1,5 @@
-#pragma once
+#ifndef OPTIX_RAYTRACER_SCENE_DATA_H
+#define OPTIX_RAYTRACER_SCENE_DATA_H
 
 #include <cuda_runtime.h>  // float3, float2, uint3, cudaTextureObject_t
 
@@ -26,3 +27,5 @@ struct MaterialData
     float3 emission      = { 0.f, 0.f, 0.f };
     float  emissionScale = 1.f;
 };
+
+#endif // OPTIX_RAYTRACER_SCENE_DATA_H

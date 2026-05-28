@@ -1,4 +1,5 @@
-#pragma once
+#ifndef OPTIX_RAYTRACER_SCENE_H
+#define OPTIX_RAYTRACER_SCENE_H
 
 #include "Mesh.h"
 #include "Texture.h"
@@ -36,3 +37,5 @@ private:
     std::vector<std::string>  m_materialNames;  // parallel to m_materials
     std::vector<Texture>      m_textures;
 };
+
+#endif // OPTIX_RAYTRACER_SCENE_H

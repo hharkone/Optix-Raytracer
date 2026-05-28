@@ -1,4 +1,5 @@
-#pragma once
+#ifndef OPTIX_RAYTRACER_MESH_H
+#define OPTIX_RAYTRACER_MESH_H
 
 #include <cuda_runtime.h>  // float3, float2, uint3
 #include <vector>
@@ -17,3 +18,5 @@ struct Mesh
     int         materialIndex = -1;
     std::string name;
 };
+
+#endif // OPTIX_RAYTRACER_MESH_H

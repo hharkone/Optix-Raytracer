@@ -1,4 +1,5 @@
-#pragma once
+#ifndef OPTIX_RAYTRACER_APPLICATION_H
+#define OPTIX_RAYTRACER_APPLICATION_H
 
 #include <optix.h>
 #include <optix_stubs.h>
@@ -46,3 +47,5 @@ private:
                                  const char*  message,
                                  void*        cbdata);
 };
+
+#endif // OPTIX_RAYTRACER_APPLICATION_H

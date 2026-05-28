@@ -1,4 +1,5 @@
-#pragma once
+#ifndef OPTIX_RAYTRACER_TEXTURE_H
+#define OPTIX_RAYTRACER_TEXTURE_H
 
 #include <cstdint>
 #include <vector>
@@ -12,3 +13,5 @@ struct Texture
     int                  channels = 4;  // RGBA
     std::string          name;
 };
+
+#endif // OPTIX_RAYTRACER_TEXTURE_H
