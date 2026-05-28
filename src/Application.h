@@ -18,7 +18,10 @@
 class Application
 {
 public:
-    Application(int width, int height, const std::string& title);
+    // ptxDir: directory containing the compiled .ptx shader files (usually the
+    // same directory as the executable — pass std::filesystem::path(argv[0]).parent_path()).
+    Application(int width, int height, const std::string& title,
+                const std::string& ptxDir = ".");
     ~Application();
 
     // Returns false when the window should close.
@@ -46,6 +49,8 @@ private:
     void initImGui();
     void initCuda();
     void initOptix();
+    void buildPipeline(const std::string& ptxDir);
+    void buildSbt();
     void resizeFramebuffer(int w, int h);
 
     void loadScene(const std::string& path);
@@ -54,6 +59,23 @@ private:
                                  const char*  tag,
                                  const char*  message,
                                  void*        cbdata);
+
+    // OptiX pipeline (built once at startup)
+    OptixModule       m_module      = nullptr;
+    OptixProgramGroup m_pgRaygen    = nullptr;
+    OptixProgramGroup m_pgMiss      = nullptr;
+    OptixProgramGroup m_pgHitgroup  = nullptr;
+    OptixPipeline     m_pipeline    = nullptr;
+
+    // Shader binding table (rebuilt whenever the scene changes)
+    CUdeviceptr             m_sbtRaygenBuffer   = 0;
+    CUdeviceptr             m_sbtMissBuffer     = 0;
+    CUdeviceptr             m_sbtHitgroupBuffer = 0;
+    OptixShaderBindingTable m_sbt               = {};
+
+    // Launch parameters — host struct updated each frame, device copy passed to optixLaunch
+    LaunchParams m_launchParams       = {};
+    CUdeviceptr  m_launchParamsBuffer = 0;
 
     std::string m_sceneFilePath;  // empty = no scene loaded
     std::string m_loadError;      // empty = no error

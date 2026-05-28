@@ -35,6 +35,18 @@ public:
 
     OptixTraversableHandle traversable() const { return m_tlas; }
     bool                   valid()       const { return m_tlas != 0; }
+    size_t                 meshCount()   const { return m_meshBuffers.size(); }
+
+    // Per-mesh device pointers needed to fill SBT hit group records.
+    struct MeshDevicePtrs
+    {
+        CUdeviceptr positions;  // device float3 array
+        CUdeviceptr indices;    // device uint3  array
+    };
+    MeshDevicePtrs meshDevicePtrs(size_t idx) const
+    {
+        return { m_meshBuffers[idx].positions, m_meshBuffers[idx].indices };
+    }
 
 private:
     // Per-mesh device buffers kept alive for the lifetime of the AS.

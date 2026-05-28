@@ -1,13 +1,19 @@
 #include "Application.h"
 
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
-int main(int /*argc*/, char** /*argv*/)
+int main(int /*argc*/, char** argv)
 {
     try
     {
-        Application app(1280, 720, "OptiX Raytracer");
+        // Resolve the directory that contains the compiled PTX shaders.
+        // The build system copies devicePrograms.ptx next to the executable.
+        const std::string ptxDir =
+            std::filesystem::path(argv[0]).parent_path().string();
+
+        Application app(1280, 720, "OptiX Raytracer", ptxDir);
         while (app.tick()) {}
     }
     catch (const std::exception& e)
