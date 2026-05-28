@@ -59,13 +59,15 @@ Application::Application(int width, int height, const std::string& title)
 
 Application::~Application()
 {
-    if (d_colorBuffer) {
+    if (d_colorBuffer)
+    {
         cudaFree(d_colorBuffer);
         d_colorBuffer = nullptr;
     }
     delete[] h_colorBuffer;
 
-    if (m_optixContext) {
+    if (m_optixContext)
+    {
         optixDeviceContextDestroy(m_optixContext);
         m_optixContext = nullptr;
     }
@@ -74,7 +76,8 @@ Application::~Application()
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    if (m_window) {
+    if (m_window)
+    {
         glfwDestroyWindow(m_window);
         m_window = nullptr;
     }
@@ -180,7 +183,8 @@ bool Application::tick()
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     // Multi-viewport support (ImGuiConfigFlags_ViewportsEnable)
-    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    {
         GLFWwindow* backup = glfwGetCurrentContext();
         ImGui::UpdatePlatformWindows();
         ImGui::RenderPlatformWindowsDefault();

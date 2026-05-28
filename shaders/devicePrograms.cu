@@ -7,7 +7,8 @@
 
 // Launch parameters uploaded by the host via cudaMemcpyToSymbol.
 // Must have C linkage and be declared __constant__.
-extern "C" {
+extern "C"
+{
     __constant__ LaunchParams optixLaunchParams;
 }
 

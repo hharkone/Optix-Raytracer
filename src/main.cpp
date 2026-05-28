@@ -5,11 +5,13 @@
 
 int main(int /*argc*/, char** /*argv*/)
 {
-    try {
+    try
+    {
         Application app(1280, 720, "OptiX Raytracer");
         while (app.tick()) {}
     }
-    catch (const std::exception& e) {
+    catch (const std::exception& e)
+    {
         std::cerr << "Fatal: " << e.what() << '\n';
         return 1;
     }
