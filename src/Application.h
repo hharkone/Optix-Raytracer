@@ -8,7 +8,9 @@
 #include <GLFW/glfw3.h>
 
 #include "LaunchParams.h"
+#include "Scene.h"
 
+#include <memory>
 #include <string>
 
 class Application
@@ -26,6 +28,8 @@ private:
     int                m_height        = 0;
 
     OptixDeviceContext m_optixContext   = nullptr;
+
+    std::unique_ptr<Scene> m_scene;
 
     // Framebuffer — filled by device programs, displayed via OpenGL texture
     uchar4*            d_colorBuffer   = nullptr;

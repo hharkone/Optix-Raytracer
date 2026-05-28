@@ -55,6 +55,8 @@ Application::Application(int width, int height, const std::string& title)
     const size_t fbBytes = static_cast<size_t>(width) * height * sizeof(uchar4);
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_colorBuffer), fbBytes));
     h_colorBuffer = new uchar4[static_cast<size_t>(width) * height];
+
+    m_scene = std::make_unique<Scene>();
 }
 
 Application::~Application()
@@ -168,8 +170,11 @@ bool Application::tick()
                                  ImGuiDockNodeFlags_PassthruCentralNode);
 
     ImGui::Begin("Raytracer");
-    ImGui::Text("Phase 1 — build system stub");
-    ImGui::Text("OptiX context: 0x%p", static_cast<void*>(m_optixContext));
+    ImGui::Text("Phase 2 — scene scaffold");
+    ImGui::Text("Meshes: %d  Materials: %d  Textures: %d",
+        static_cast<int>(m_scene->meshes().size()),
+        static_cast<int>(m_scene->materials().size()),
+        static_cast<int>(m_scene->textures().size()));
     ImGui::End();
 
     ImGui::Render();

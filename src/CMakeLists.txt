@@ -2,6 +2,10 @@ add_executable(OptixRaytracer
     main.cpp
     Application.h
     Application.cpp
+    Scene.h
+    Scene.cpp
+    Mesh.h
+    Texture.h
 )
 
 target_include_directories(OptixRaytracer PRIVATE
