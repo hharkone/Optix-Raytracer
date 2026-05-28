@@ -106,3 +106,6 @@ add_subdirectory(extern/glad)
 # ── Project subdirectories ────────────────────────────────────────────────────
 add_subdirectory(shaders)   # device_programs OBJECT library (PTX)
 add_subdirectory(src)       # OptixRaytracer executable
+
+# Set OptixRaytracer as the default startup project in Visual Studio
+set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT OptixRaytracer)

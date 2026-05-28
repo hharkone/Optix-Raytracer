@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Injected by CMake via VS_USER_PROPS.
+     Adds the OptiX SDK include directory to Visual Studio's IncludePath so
+     that the C++ IntelliSense parser can resolve <optix.h> in .cu files
+     without requiring NVIDIA NSight Visual Studio Edition. -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <IncludePath>@OptiX_INCLUDE_DIR@;$(IncludePath)</IncludePath>
+  </PropertyGroup>
+</Project>

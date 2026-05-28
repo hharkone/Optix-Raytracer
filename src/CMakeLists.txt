@@ -44,7 +44,8 @@ add_custom_command(TARGET OptixRaytracer POST_BUILD
 # Suppress LNK4098 — GLFW is built with release CRT; /NODEFAULTLIB suppresses
 # the "defaultlib LIBCMT conflicts" warning in Debug builds without breaking linkage
 target_link_options(OptixRaytracer PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/NODEFAULTLIB:LIBCMT>
+    $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:/NODEFAULTLIB:MSVCRT>
+    $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:/NODEFAULTLIB:MSVCRTD>
 )
 
 target_compile_definitions(OptixRaytracer PRIVATE NOMINMAX)

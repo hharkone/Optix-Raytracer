@@ -2,6 +2,7 @@
 #define OPTIX_RAYTRACER_ACCEL_H
 
 #include <optix.h>
+#include <optix_stubs.h>
 #include <cuda_runtime.h>
 
 #include <vector>
