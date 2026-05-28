@@ -40,7 +40,9 @@ const std::vector<Texture>& Scene::textures() const
 const std::string& Scene::materialName(int index) const
 {
     if (index < 0 || index >= static_cast<int>(m_materialNames.size()))
+    {
         throw std::out_of_range("Scene::materialName index out of range");
+    }
     return m_materialNames[index];
 }
 

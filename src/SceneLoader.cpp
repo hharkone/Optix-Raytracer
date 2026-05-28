@@ -34,7 +34,9 @@ static float3 f3Normalize(float3 v)
 {
     const float len = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
     if (len < 1e-8f)
+    {
         return make_float3(0.f, 1.f, 0.f);  // degenerate triangle → arbitrary up
+    }
     return make_float3(v.x / len, v.y / len, v.z / len);
 }
 
@@ -61,7 +63,9 @@ static void readVec3Accessor(
     size_t count = 0, stride = 0;
     const uint8_t* base = accessorBase(model, accessorIndex, count, stride);
     if (stride == 0)
+    {
         stride = sizeof(float) * 3;
+    }
 
     out.resize(count);
     for (size_t i = 0; i < count; ++i)
@@ -79,7 +83,9 @@ static void readVec2Accessor(
     size_t count = 0, stride = 0;
     const uint8_t* base = accessorBase(model, accessorIndex, count, stride);
     if (stride == 0)
+    {
         stride = sizeof(float) * 2;
+    }
 
     out.resize(count);
     for (size_t i = 0; i < count; ++i)
@@ -196,7 +202,9 @@ static MaterialData buildMaterial(
     {
         const int imageIdx = model.textures[pbr.baseColorTexture.index].source;
         if (imageIdx >= 0)
+        {
             mat.albedoTexture = textureOffset + imageIdx;
+        }
     }
 
     if (gltfMat.emissiveFactor.size() == 3)
@@ -223,11 +231,15 @@ static void loadMesh(
         const tinygltf::Primitive& prim = gltfMesh.primitives[primIdx];
 
         if (prim.mode != TINYGLTF_MODE_TRIANGLES)
+        {
             continue;
+        }
 
         auto posIt = prim.attributes.find("POSITION");
         if (posIt == prim.attributes.end())
+        {
             continue;
+        }
 
         Mesh mesh;
         mesh.name = (gltfMesh.primitives.size() == 1)
@@ -238,11 +250,15 @@ static void loadMesh(
 
         auto normIt = prim.attributes.find("NORMAL");
         if (normIt != prim.attributes.end())
+        {
             readVec3Accessor(model, normIt->second, mesh.normals);
+        }
 
         auto uvIt = prim.attributes.find("TEXCOORD_0");
         if (uvIt != prim.attributes.end())
+        {
             readVec2Accessor(model, uvIt->second, mesh.uvs);
+        }
 
         if (prim.indices >= 0)
         {
@@ -262,10 +278,14 @@ static void loadMesh(
         }
 
         if (mesh.normals.empty())
+        {
             generateFlatNormals(mesh);
+        }
 
         if (mesh.uvs.empty())
+        {
             mesh.uvs.resize(mesh.positions.size(), make_float2(0.f, 0.f));
+        }
 
         mesh.materialIndex = (prim.material >= 0)
             ? materialOffset + prim.material
@@ -307,7 +327,9 @@ bool loadGltfFile(const std::string& path, Scene& outScene, std::string& outErro
         outScene.addMaterial(buildMaterial(mat, model, textureOffset), mat.name);
 
     if (model.materials.empty())
+    {
         outScene.addMaterial(MaterialData{}, "default");
+    }
 
     for (const tinygltf::Mesh& gltfMesh : model.meshes)
         loadMesh(gltfMesh, model, materialOffset, outScene);

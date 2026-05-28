@@ -98,7 +98,9 @@ Application::~Application()
 void Application::initWindow(const std::string& title)
 {
     if (!glfwInit())
+    {
         throw std::runtime_error("Failed to initialise GLFW");
+    }
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -106,7 +108,9 @@ void Application::initWindow(const std::string& title)
 
     m_window = glfwCreateWindow(m_width, m_height, title.c_str(), nullptr, nullptr);
     if (!m_window)
+    {
         throw std::runtime_error("Failed to create GLFW window");
+    }
 
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(1);
@@ -115,7 +119,9 @@ void Application::initWindow(const std::string& title)
 void Application::initOpenGL()
 {
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
+    {
         throw std::runtime_error("Failed to initialise GLAD");
+    }
 }
 
 void Application::initImGui()
@@ -167,9 +173,13 @@ void Application::loadScene(const std::string& path)
     m_loadError.clear();
     m_sceneFilePath.clear();
     if (loadGltfFile(path, *m_scene, m_loadError))
+    {
         m_sceneFilePath = path;
+    }
     else
+    {
         m_scene->clear();  // discard any partial data from a failed load
+    }
 }
 
 // ─── Per-frame ────────────────────────────────────────────────────────────────
@@ -177,7 +187,9 @@ void Application::loadScene(const std::string& path)
 bool Application::tick()
 {
     if (glfwWindowShouldClose(m_window))
+    {
         return false;
+    }
 
     glfwPollEvents();
 
@@ -208,7 +220,9 @@ bool Application::tick()
             std::filesystem::path(m_sceneFilePath).filename().string();
         ImGui::Text("Scene: %s", filename.c_str());
         if (ImGui::IsItemHovered())
+        {
             ImGui::SetTooltip("%s", m_sceneFilePath.c_str());
+        }
     }
     else
     {
@@ -216,8 +230,10 @@ bool Application::tick()
     }
 
     if (!m_loadError.empty())
+    {
         ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f),
                            "Error: %s", m_loadError.c_str());
+    }
 
     ImGui::Separator();
     ImGui::Text("Meshes: %d  Materials: %d  Textures: %d",
