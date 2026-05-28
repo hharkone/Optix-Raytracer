@@ -1,0 +1,113 @@
+# OptiX Raytracer
+
+A GPU path tracer built on NVIDIA OptiX 9.x, C++17, and Dear ImGui with docking support.
+
+## Prerequisites
+
+Before configuring the project, ensure the following are installed:
+
+| Requirement | Version | Notes |
+|---|---|---|
+| NVIDIA GPU | Compute capability ≥ 7.5 | RTX 20xx / 30xx / 40xx series |
+| NVIDIA Driver | ≥ 570.x | Required by OptiX 9.1 |
+| [NVIDIA OptiX SDK](https://developer.nvidia.com/optix) | 9.1.0 | Free download; requires NVIDIA developer account |
+| [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) | 12.x or 13.x | Installs `nvcc` and CUDA runtime |
+| [Visual Studio 2022](https://visualstudio.microsoft.com/) | 17.x | With **Desktop development with C++** and **CUDA** workloads |
+| [CMake](https://cmake.org/download/) | ≥ 3.20 | Add to PATH during install |
+| Python + pip | any recent | Only needed for the one-time GLAD generation step |
+
+> **Driver check**: Run `nvidia-smi` in a terminal. The driver version appears top-right. If it is below 570, download the latest from [nvidia.com/drivers](https://www.nvidia.com/drivers).
+
+## First-time Setup — Generate the OpenGL Loader
+
+GLAD (the OpenGL function loader) is committed as pre-generated source files and does **not** need to be regenerated on every build. If you are setting up the repo for the first time and the `extern/glad/src/glad.c` file is already present, skip this step.
+
+If the file is missing (e.g., after a fresh clone that lost it), regenerate with:
+
+```powershell
+pip install glad==0.1.36
+python -m glad --generator=c --profile=core --out-path=extern/glad --api="gl=3.3"
+```
+
+## Building
+
+### 1. Configure (generate the VS2022 solution)
+
+Open a **PowerShell** window in the repository root:
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+```
+
+If OptiX is not detected automatically (e.g., multiple SDK versions are installed):
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+    -DOptiX_INSTALL_DIR="C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0"
+```
+
+CMake will:
+- Download GLFW and ImGui (docking branch) from GitHub — internet access required on first configure
+- Compile GLAD from the committed source
+- Detect CUDA Toolkit and OptiX SDK automatically
+
+### 2. Build
+
+```powershell
+cmake --build build --config Debug --parallel
+```
+
+For a release build:
+
+```powershell
+cmake --build build --config Release --parallel
+```
+
+Alternatively, open `build/OptixRaytracer.sln` in Visual Studio 2022 and build from there.
+
+### 3. Run
+
+```powershell
+.\build\bin\Debug\OptixRaytracer.exe
+```
+
+You should see a 1280×720 window with a dark background and a floating ImGui panel labelled **Raytracer** showing the OptiX context pointer.
+
+## Project Structure
+
+```
+Optix-Raytracer/
+├── CMakeLists.txt          Root build file: project settings, FetchContent, subdirs
+├── cmake/
+│   └── FindOptiX.cmake     Locates the OptiX SDK; creates OptiX::OptiX target
+├── extern/
+│   └── glad/               Pre-generated OpenGL 3.3 core function loader
+├── shaders/
+│   ├── LaunchParams.h      Data structs shared between C++ host and CUDA device code
+│   └── devicePrograms.cu   OptiX device programs (raygen, miss) — compiled to PTX
+└── src/
+    ├── main.cpp            Entry point
+    ├── Application.h       Application class declaration
+    └── Application.cpp     Window init, CUDA/OptiX init, per-frame render loop
+```
+
+## Troubleshooting
+
+**`OptiX SDK not found`**
+Add `-DOptiX_INSTALL_DIR=...` to the CMake configure command (see above). The SDK defaults to `C:/ProgramData/NVIDIA Corporation/OptiX SDK <version>`.
+
+**`optixInit() failed` or crash on startup**
+Your NVIDIA driver is too old. Update to ≥ 570.x from [nvidia.com/drivers](https://www.nvidia.com/drivers).
+
+**`nvcc` not found during configure**
+CUDA Toolkit is not on the system PATH. Reinstall CUDA Toolkit and ensure it is added to PATH, or open the project from a **Visual Studio Developer Command Prompt**.
+
+**`CUDA : error : Cannot find compiler 'cl.exe'`**
+Your Visual Studio installation is missing the C++ workload. Open the VS Installer, modify the 2022 installation, and add **Desktop development with C++**.
+
+**ImGui windows cannot be docked**
+Docking is enabled but requires dragging a window's title bar over another panel or to the edges of the main viewport. Right-click a panel's title bar to access docking options.
+
+## License
+
+GNU General Public License v3 — see [LICENSE](LICENSE).

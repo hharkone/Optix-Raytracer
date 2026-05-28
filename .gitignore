@@ -16,6 +16,10 @@
 # Mono auto generated files
 mono_crash.*
 
+# CMake build directory and user-local preset overrides
+build/
+CMakeUserPresets.json
+
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
