@@ -109,13 +109,24 @@ Application::~Application()
 
     freeEnvMap(m_envMap);
 
+    if (m_accumBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_accumBuffer));
+        m_accumBuffer = 0;
+    }
+    if (m_materialsBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_materialsBuffer));
+        m_materialsBuffer = 0;
+    }
+
     m_accel.reset();  // free AS device memory before destroying OptiX context
 
-    if (m_pipeline)   { optixPipelineDestroy(m_pipeline);          m_pipeline   = nullptr; }
-    if (m_pgHitgroup) { optixProgramGroupDestroy(m_pgHitgroup);    m_pgHitgroup = nullptr; }
-    if (m_pgMiss)     { optixProgramGroupDestroy(m_pgMiss);        m_pgMiss     = nullptr; }
-    if (m_pgRaygen)   { optixProgramGroupDestroy(m_pgRaygen);      m_pgRaygen   = nullptr; }
-    if (m_module)     { optixModuleDestroy(m_module);              m_module     = nullptr; }
+    if (m_pipeline)   { optixPipelineDestroy(m_pipeline);       m_pipeline   = nullptr; }
+    if (m_pgHitgroup) { optixProgramGroupDestroy(m_pgHitgroup); m_pgHitgroup = nullptr; }
+    if (m_pgMiss)     { optixProgramGroupDestroy(m_pgMiss);     m_pgMiss     = nullptr; }
+    if (m_pgRaygen)   { optixProgramGroupDestroy(m_pgRaygen);   m_pgRaygen   = nullptr; }
+    if (m_module)     { optixModuleDestroy(m_module);           m_module     = nullptr; }
 
     if (m_optixContext)
     {
@@ -280,7 +291,7 @@ void Application::buildPipeline(const std::string& ptxDir)
     pipelineOpts.usesMotionBlur                   = 0;
     pipelineOpts.traversableGraphFlags            =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    pipelineOpts.numPayloadValues                 = 3;  // p0=R, p1=G, p2=B
+    pipelineOpts.numPayloadValues                 = 2;  // p0/p1 = packed PathVertex pointer
     pipelineOpts.numAttributeValues               = 2;  // barycentrics (built-in triangle)
     pipelineOpts.exceptionFlags                   = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineOpts.pipelineLaunchParamsVariableName = "optixLaunchParams";
@@ -327,7 +338,9 @@ void Application::buildPipeline(const std::string& ptxDir)
     const OptixProgramGroup pgs[] = { m_pgRaygen, m_pgMiss, m_pgHitgroup };
 
     OptixPipelineLinkOptions linkOpts = {};
-    linkOpts.maxTraceDepth            = 1;  // primary rays only, no recursion
+    // Depth 1: the raygen calls optixTrace in a loop — no CH/miss ever calls
+    // optixTrace, so the trace chain never exceeds depth 1.
+    linkOpts.maxTraceDepth = 1;
 
     OPTIX_CHECK(optixPipelineCreate(
         m_optixContext,
@@ -367,14 +380,12 @@ void Application::reloadPipeline()
     }
     catch (...)
     {
-        // Clean up whatever buildPipeline managed to create before throwing
         if (m_pipeline)   { optixPipelineDestroy(m_pipeline);       m_pipeline   = nullptr; }
         if (m_pgHitgroup) { optixProgramGroupDestroy(m_pgHitgroup); m_pgHitgroup = nullptr; }
         if (m_pgMiss)     { optixProgramGroupDestroy(m_pgMiss);     m_pgMiss     = nullptr; }
         if (m_pgRaygen)   { optixProgramGroupDestroy(m_pgRaygen);   m_pgRaygen   = nullptr; }
         if (m_module)     { optixModuleDestroy(m_module);           m_module     = nullptr; }
 
-        // Restore the previous working pipeline so rendering continues
         m_module     = oldModule;
         m_pgRaygen   = oldPgRaygen;
         m_pgMiss     = oldPgMiss;
@@ -383,9 +394,8 @@ void Application::reloadPipeline()
         throw;
     }
 
-    // New pipeline is valid — repack SBT headers to reference the new program groups,
-    // then release the old handles.
     buildSbt();
+    m_accumDirty = true;  // new shader = new result; clear accumulation
 
     if (oldPipeline)   { optixPipelineDestroy(oldPipeline);       }
     if (oldPgHitgroup) { optixProgramGroupDestroy(oldPgHitgroup); }
@@ -451,8 +461,7 @@ void Application::buildSbt()
     // ── Miss record ───────────────────────────────────────────────────────────
     MissRecord missRec = {};
     OPTIX_CHECK(optixSbtRecordPackHeader(m_pgMiss, &missRec));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtMissBuffer),
-                           sizeof(MissRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtMissBuffer), sizeof(MissRecord)));
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtMissBuffer),
                            &missRec, sizeof(MissRecord), cudaMemcpyHostToDevice));
 
@@ -516,9 +525,19 @@ void Application::resizeFramebuffer(int w, int h)
     m_viewportWidth  = w;
     m_viewportHeight = h;
 
-    const size_t byteCount = static_cast<size_t>(w) * h * sizeof(uchar4);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_colorBuffer), byteCount));
-    h_colorBuffer = new uchar4[static_cast<size_t>(w) * h];
+    const size_t pixelCount = static_cast<size_t>(w) * h;
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_colorBuffer), pixelCount * sizeof(uchar4)));
+    h_colorBuffer = new uchar4[pixelCount];
+
+    // Accumulation buffer: float4 per pixel (w component unused)
+    if (m_accumBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_accumBuffer));
+        m_accumBuffer = 0;
+    }
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_accumBuffer), pixelCount * sizeof(float4)));
+    m_accumDirty = true;
 
     glGenTextures(1, &m_displayTexture);
     glBindTexture(GL_TEXTURE_2D, m_displayTexture);
@@ -563,6 +582,22 @@ void Application::loadScene(const std::string& path)
         m_scene->clear();  // discard any partial data from a failed load
     }
 
+    // Upload materials to device so the closest-hit shader can look up albedo.
+    if (m_materialsBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_materialsBuffer));
+        m_materialsBuffer = 0;
+    }
+    const auto& mats = m_scene->materials();
+    if (!mats.empty())
+    {
+        const size_t matBytes = mats.size() * sizeof(MaterialData);
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_materialsBuffer), matBytes));
+        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_materialsBuffer),
+                               mats.data(), matBytes, cudaMemcpyHostToDevice));
+    }
+
+    m_accumDirty = true;  // scene changed — clear accumulated samples
     buildSbt();  // rebuild with new mesh count (0 if load failed or no geometry)
 
     // Sync fly-camera state from the newly loaded (or default) scene camera so
@@ -595,6 +630,7 @@ void Application::loadEnvMap(const std::string& path)
     {
         m_envMap     = loadEnvMapEXR(path);
         m_envMapPath = std::filesystem::path(path).filename().string();
+        m_accumDirty = true;  // new env map = new lighting; clear accumulated samples
     }
     catch (const std::exception& e)
     {
@@ -703,9 +739,13 @@ bool Application::tick()
     }
 
     // ── Shader hot-reload ─────────────────────────────────────────────────────
-    // GPU is idle here (synced at the end of the previous frame), so it is safe
-    // to tear down and rebuild the pipeline when the PTX file has changed.
     checkShaderHotReload();
+
+    // ── Camera-change detection ────────────────────────────────────────────────
+    // Save camera state before updateCamera() so we can detect any change.
+    const float3 prevPos   = m_camPos;
+    const float  prevYaw   = m_camYaw;
+    const float  prevPitch = m_camPitch;
 
     // ── Frame timing ──────────────────────────────────────────────────────────
     {
@@ -737,6 +777,12 @@ bool Application::tick()
     // renders with the updated camera.
     updateCamera();
 
+    if (m_camPos.x != prevPos.x || m_camPos.y != prevPos.y || m_camPos.z != prevPos.z ||
+        m_camYaw   != prevYaw   || m_camPitch  != prevPitch)
+    {
+        m_accumDirty = true;
+    }
+
     // Enable a full-window dockspace so panels can be docked to it
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(),
                                  ImGuiDockNodeFlags_PassthruCentralNode);
@@ -761,13 +807,27 @@ bool Application::tick()
         }
 
         // ── Update launch parameters ──────────────────────────────────────────
-        m_launchParams.colorBuffer = d_colorBuffer;
-        m_launchParams.fbSize      = make_uint2(
+        // ── Reset accumulation buffer if anything changed ─────────────────────
+        if (m_accumDirty && m_accumBuffer)
+        {
+            CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(m_accumBuffer), 0,
+                static_cast<size_t>(m_viewportWidth) * m_viewportHeight * sizeof(float4)));
+            m_sampleCount = 0;
+            m_accumDirty  = false;
+        }
+
+        m_launchParams.colorBuffer   = d_colorBuffer;
+        m_launchParams.fbSize        = make_uint2(
             static_cast<unsigned int>(m_viewportWidth),
             static_cast<unsigned int>(m_viewportHeight));
-        m_launchParams.traversable =
+        m_launchParams.traversable   =
             (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
-        m_launchParams.envMap      = m_envMap.tex;
+        m_launchParams.envMap        = m_envMap.tex;
+        m_launchParams.accumBuffer   = m_accumBuffer
+            ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
+        m_launchParams.sampleIndex   = m_sampleCount;
+        m_launchParams.materials     = m_materialsBuffer
+            ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
 
         // Camera basis vectors derived from the scene camera each frame
         {
@@ -817,6 +877,7 @@ bool Application::tick()
             1));
 
         CUDA_CHECK(cudaDeviceSynchronize());
+        ++m_sampleCount;
 
         // Copy rendered result from device to host, then upload to GL texture
         CUDA_CHECK(cudaMemcpy(
@@ -977,6 +1038,12 @@ bool Application::tick()
     {
         ImGui::TextDisabled("AS: no geometry");
     }
+
+    // ── Path tracing progress ─────────────────────────────────────────────────
+    ImGui::Separator();
+    ImGui::Text("Samples: %u", m_sampleCount);
+    if (ImGui::Button("Reset Accumulation"))
+        m_accumDirty = true;
 
     ImGui::Separator();
     if (m_shaderError.empty())

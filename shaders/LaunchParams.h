@@ -7,6 +7,7 @@
 
 #include <optix.h>         // OptixTraversableHandle
 #include <cuda_runtime.h>  // uchar4, uint2
+#include "SceneData.h"     // MaterialData
 
 struct LaunchParams
 {
@@ -21,9 +22,18 @@ struct LaunchParams
     float3 V;    // up direction   * tan(halfFovV)
     float3 W;    // forward direction (unit length, pointing into scene)
 
-    // Equirectangular (lat-long) environment map. 0 = not loaded; miss program
-    // falls back to the procedural sky gradient when this is 0.
+    // Equirectangular (lat-long) environment map. 0 = not loaded; raygen falls
+    // back to the procedural sky gradient when this is 0.
     cudaTextureObject_t envMap;
+
+    // Per-pixel HDR accumulation buffer (float4, w unused).  The raygen adds
+    // one sample per launch; the display value is accumBuffer[i] / sampleIndex.
+    float4*  accumBuffer;
+    uint32_t sampleIndex;  // number of samples already accumulated
+
+    // Scene materials — device pointer to a MaterialData array, indexed by
+    // MeshData::materialIndex.  Null when no scene is loaded.
+    const MaterialData* materials;
 };
 
 #endif // OPTIX_RAYTRACER_LAUNCH_PARAMS_H

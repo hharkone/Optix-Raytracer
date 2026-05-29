@@ -84,6 +84,14 @@ private:
     CUdeviceptr             m_sbtHitgroupBuffer = 0;
     OptixShaderBindingTable m_sbt               = {};
 
+    // Scene materials on device (uploaded when a scene is loaded)
+    CUdeviceptr m_materialsBuffer = 0;
+
+    // Sample accumulation — reset whenever the camera, scene, or env map changes
+    CUdeviceptr m_accumBuffer  = 0;   // float4, width * height
+    uint32_t    m_sampleCount  = 0;
+    bool        m_accumDirty   = true; // true = clear before the next launch
+
     // Launch parameters — host struct updated each frame, device copy passed to optixLaunch
     LaunchParams m_launchParams       = {};
     CUdeviceptr  m_launchParamsBuffer = 0;
