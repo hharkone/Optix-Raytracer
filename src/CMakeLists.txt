@@ -11,11 +11,18 @@ add_executable(OptixRaytracer
     Texture.h
     SceneLoader.h
     SceneLoader.cpp
+    EnvMap.h
+    EnvMap.cpp
+    # miniz (tinyexr's bundled zlib) — .h declares, .c defines; both are needed
+    ${tinyexr_SOURCE_DIR}/deps/miniz/miniz.c
 )
 
 target_include_directories(OptixRaytracer PRIVATE
     ${CMAKE_SOURCE_DIR}/shaders
     ${OptiX_INCLUDE_DIR}
+    # tinyexr header + bundled miniz (needed by EnvMap.cpp which defines TINYEXR_IMPLEMENTATION)
+    ${tinyexr_SOURCE_DIR}
+    ${tinyexr_SOURCE_DIR}/deps/miniz
 )
 
 target_link_libraries(OptixRaytracer PRIVATE
@@ -57,5 +64,5 @@ target_link_options(OptixRaytracer PRIVATE
 target_compile_definitions(OptixRaytracer PRIVATE NOMINMAX)
 
 # Visual Studio source groups for cleaner Solution Explorer layout
-source_group("Source Files" FILES main.cpp Application.cpp Accel.cpp Scene.cpp SceneLoader.cpp)
-source_group("Header Files" FILES Application.h Accel.h Camera.h Scene.h SceneLoader.h Mesh.h Texture.h)
+source_group("Source Files" FILES main.cpp Application.cpp Accel.cpp Scene.cpp SceneLoader.cpp EnvMap.cpp)
+source_group("Header Files" FILES Application.h Accel.h Camera.h Scene.h SceneLoader.h Mesh.h Texture.h EnvMap.h)

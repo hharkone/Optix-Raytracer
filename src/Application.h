@@ -9,11 +9,13 @@
 #include <GLFW/glfw3.h>
 
 #include "Accel.h"
+#include "EnvMap.h"
 #include "LaunchParams.h"
 #include "Scene.h"
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -55,7 +57,14 @@ private:
     void buildSbt();
     void resizeFramebuffer(int w, int h);
 
+    // Hot-reload: rebuild the pipeline from the PTX file whenever it changes on disk.
+    // reloadPipeline() swaps in the new pipeline atomically — the old one stays alive
+    // until the new one is confirmed working, so a broken shader never kills the render.
+    void reloadPipeline();
+    void checkShaderHotReload();
+
     void loadScene(const std::string& path);
+    void loadEnvMap(const std::string& path);
 
     static void optixLogCallback(unsigned int level,
                                  const char*  tag,
@@ -81,6 +90,16 @@ private:
 
     std::string m_sceneFilePath;  // empty = no scene loaded
     std::string m_loadError;      // empty = no error
+
+    // Environment map (lat-long EXR)
+    EnvMapData  m_envMap;          // CUDA array + texture object; zeroed = not loaded
+    std::string m_envMapPath;      // display name
+    std::string m_envMapError;     // non-empty = last load failed
+
+    // Hot-reload state
+    std::string                      m_ptxDir;
+    std::filesystem::file_time_type  m_ptxWriteTime = {};
+    std::string                      m_shaderError;   // non-empty = last reload failed
 
     // GPU device info — queried once in initCuda()
     std::string   m_deviceName;

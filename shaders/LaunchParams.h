@@ -20,6 +20,10 @@ struct LaunchParams
     float3 U;    // right direction * tan(halfFovH)
     float3 V;    // up direction   * tan(halfFovV)
     float3 W;    // forward direction (unit length, pointing into scene)
+
+    // Equirectangular (lat-long) environment map. 0 = not loaded; miss program
+    // falls back to the procedural sky gradient when this is 0.
+    cudaTextureObject_t envMap;
 };
 
 #endif // OPTIX_RAYTRACER_LAUNCH_PARAMS_H

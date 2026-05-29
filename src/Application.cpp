@@ -29,24 +29,24 @@
 
 // ─── Error macros ─────────────────────────────────────────────────────────────
 
-#define CUDA_CHECK(call)                                                        \
-    do {                                                                        \
-        cudaError_t rc = (call);                                                \
-        if (rc != cudaSuccess) {                                                \
+#define CUDA_CHECK(call)                                                       \
+    do {                                                                       \
+        cudaError_t rc = (call);                                               \
+        if (rc != cudaSuccess) {                                               \
             throw std::runtime_error(std::string("CUDA error in " __FILE__     \
                 ":" + std::to_string(__LINE__) + " — ")                        \
-                + cudaGetErrorString(rc));                                      \
-        }                                                                       \
+                + cudaGetErrorString(rc));                                     \
+        }                                                                      \
     } while (0)
 
-#define OPTIX_CHECK(call)                                                       \
-    do {                                                                        \
-        OptixResult rc = (call);                                                \
-        if (rc != OPTIX_SUCCESS) {                                              \
+#define OPTIX_CHECK(call)                                                      \
+    do {                                                                       \
+        OptixResult rc = (call);                                               \
+        if (rc != OPTIX_SUCCESS) {                                             \
             throw std::runtime_error(std::string("OptiX error in " __FILE__    \
                 ":" + std::to_string(__LINE__) + " — ")                        \
-                + optixGetErrorString(rc));                                     \
-        }                                                                       \
+                + optixGetErrorString(rc));                                    \
+        }                                                                      \
     } while (0)
 
 // ─── Construction / Destruction ───────────────────────────────────────────────
@@ -61,6 +61,13 @@ Application::Application(int width, int height, const std::string& title,
     initCuda();
     initOptix();
     buildPipeline(ptxDir);
+
+    // Hot-reload — remember where the PTX lives and when it was last written
+    m_ptxDir = ptxDir;
+    {
+        std::error_code ec;
+        m_ptxWriteTime = std::filesystem::last_write_time(std::filesystem::path(ptxDir) / "devicePrograms.ptx", ec);
+    }
 
     m_scene = std::make_unique<Scene>();
     buildSbt();  // empty SBT — no meshes yet
@@ -99,6 +106,8 @@ Application::~Application()
         cudaFree(reinterpret_cast<void*>(m_sbtHitgroupBuffer));
         m_sbtHitgroupBuffer = 0;
     }
+
+    freeEnvMap(m_envMap);
 
     m_accel.reset();  // free AS device memory before destroying OptiX context
 
@@ -331,6 +340,84 @@ void Application::buildPipeline(const std::string& ptxDir)
     OPTIX_CHECK(optixPipelineSetStackSize(m_pipeline, 0, 0, 2048, 2));
 }
 
+// ─── Hot reload ───────────────────────────────────────────────────────────────
+
+void Application::reloadPipeline()
+{
+    // Drain the GPU before touching any pipeline objects
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    // Save the current handles — we restore them if the new PTX fails to compile,
+    // which keeps the last working shader running instead of going black.
+    const OptixModule       oldModule     = m_module;
+    const OptixProgramGroup oldPgRaygen   = m_pgRaygen;
+    const OptixProgramGroup oldPgMiss     = m_pgMiss;
+    const OptixProgramGroup oldPgHitgroup = m_pgHitgroup;
+    const OptixPipeline     oldPipeline   = m_pipeline;
+
+    m_module     = nullptr;
+    m_pgRaygen   = nullptr;
+    m_pgMiss     = nullptr;
+    m_pgHitgroup = nullptr;
+    m_pipeline   = nullptr;
+
+    try
+    {
+        buildPipeline(m_ptxDir);
+    }
+    catch (...)
+    {
+        // Clean up whatever buildPipeline managed to create before throwing
+        if (m_pipeline)   { optixPipelineDestroy(m_pipeline);       m_pipeline   = nullptr; }
+        if (m_pgHitgroup) { optixProgramGroupDestroy(m_pgHitgroup); m_pgHitgroup = nullptr; }
+        if (m_pgMiss)     { optixProgramGroupDestroy(m_pgMiss);     m_pgMiss     = nullptr; }
+        if (m_pgRaygen)   { optixProgramGroupDestroy(m_pgRaygen);   m_pgRaygen   = nullptr; }
+        if (m_module)     { optixModuleDestroy(m_module);           m_module     = nullptr; }
+
+        // Restore the previous working pipeline so rendering continues
+        m_module     = oldModule;
+        m_pgRaygen   = oldPgRaygen;
+        m_pgMiss     = oldPgMiss;
+        m_pgHitgroup = oldPgHitgroup;
+        m_pipeline   = oldPipeline;
+        throw;
+    }
+
+    // New pipeline is valid — repack SBT headers to reference the new program groups,
+    // then release the old handles.
+    buildSbt();
+
+    if (oldPipeline)   { optixPipelineDestroy(oldPipeline);       }
+    if (oldPgHitgroup) { optixProgramGroupDestroy(oldPgHitgroup); }
+    if (oldPgMiss)     { optixProgramGroupDestroy(oldPgMiss);     }
+    if (oldPgRaygen)   { optixProgramGroupDestroy(oldPgRaygen);   }
+    if (oldModule)     { optixModuleDestroy(oldModule);           }
+}
+
+void Application::checkShaderHotReload()
+{
+    const auto ptxPath = std::filesystem::path(m_ptxDir) / "devicePrograms.ptx";
+
+    std::error_code ec;
+    const auto newWriteTime = std::filesystem::last_write_time(ptxPath, ec);
+    if (ec || newWriteTime == m_ptxWriteTime)
+        return;
+
+    // Stamp first — prevents hammering reloadPipeline every frame if the PTX
+    // stays broken (the timestamp will have moved but won't keep changing).
+    m_ptxWriteTime = newWriteTime;
+
+    try
+    {
+        reloadPipeline();
+        m_shaderError.clear();
+    }
+    catch (const std::exception& e)
+    {
+        m_shaderError = e.what();
+    }
+}
+
 // ─── Shader binding table ────────────────────────────────────────────────────
 
 void Application::buildSbt()
@@ -496,6 +583,25 @@ void Application::loadScene(const std::string& path)
     }
 }
 
+// ─── Environment map ─────────────────────────────────────────────────────────
+
+void Application::loadEnvMap(const std::string& path)
+{
+    m_envMapError.clear();
+    freeEnvMap(m_envMap);   // release previous if any
+    m_envMapPath.clear();
+
+    try
+    {
+        m_envMap     = loadEnvMapEXR(path);
+        m_envMapPath = std::filesystem::path(path).filename().string();
+    }
+    catch (const std::exception& e)
+    {
+        m_envMapError = e.what();
+    }
+}
+
 // ─── Camera controller ───────────────────────────────────────────────────────
 
 void Application::updateCamera()
@@ -596,6 +702,11 @@ bool Application::tick()
         return false;
     }
 
+    // ── Shader hot-reload ─────────────────────────────────────────────────────
+    // GPU is idle here (synced at the end of the previous frame), so it is safe
+    // to tear down and rebuild the pipeline when the PTX file has changed.
+    checkShaderHotReload();
+
     // ── Frame timing ──────────────────────────────────────────────────────────
     {
         const auto now = std::chrono::steady_clock::now();
@@ -656,6 +767,7 @@ bool Application::tick()
             static_cast<unsigned int>(m_viewportHeight));
         m_launchParams.traversable =
             (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
+        m_launchParams.envMap      = m_envMap.tex;
 
         // Camera basis vectors derived from the scene camera each frame
         {
@@ -779,6 +891,28 @@ bool Application::tick()
         }
     }
 
+    ImGui::SameLine();
+    if (ImGui::Button("Open EXR..."))
+    {
+        nfdu8char_t*    outPath = nullptr;
+        nfdfilteritem_t filters[] = { { "EXR Image", "exr" } };
+        if (NFD_OpenDialogU8(&outPath, filters, 1, nullptr) == NFD_OKAY)
+        {
+            loadEnvMap(reinterpret_cast<const char*>(outPath));
+            NFD_FreePathU8(outPath);
+        }
+    }
+    if (m_envMap.tex != 0)
+    {
+        ImGui::SameLine();
+        if (ImGui::Button("Clear EXR"))
+        {
+            freeEnvMap(m_envMap);
+            m_envMapPath.clear();
+            m_envMapError.clear();
+        }
+    }
+
     if (!m_sceneFilePath.empty())
     {
         const std::string filename =
@@ -798,6 +932,21 @@ bool Application::tick()
     {
         ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f),
                            "Error: %s", m_loadError.c_str());
+    }
+
+    if (!m_envMapPath.empty())
+    {
+        ImGui::Text("Env: %s  (%d x %d)", m_envMapPath.c_str(),
+                    m_envMap.width, m_envMap.height);
+    }
+    else if (!m_envMapError.empty())
+    {
+        ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f),
+                           "EXR error: %s", m_envMapError.c_str());
+    }
+    else
+    {
+        ImGui::TextDisabled("No environment map");
     }
 
     ImGui::Separator();
@@ -827,6 +976,18 @@ bool Application::tick()
     else
     {
         ImGui::TextDisabled("AS: no geometry");
+    }
+
+    ImGui::Separator();
+    if (m_shaderError.empty())
+    {
+        ImGui::TextColored(ImVec4(0.3f, 1.f, 0.4f, 1.f), "Shader: OK");
+        ImGui::TextDisabled("(auto-reloads on PTX change)");
+    }
+    else
+    {
+        ImGui::TextColored(ImVec4(1.f, 0.35f, 0.2f, 1.f), "Shader error — last good pipeline active");
+        ImGui::TextWrapped("%s", m_shaderError.c_str());
     }
 
     ImGui::End();

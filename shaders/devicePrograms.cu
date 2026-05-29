@@ -114,18 +114,46 @@ extern "C" __global__ void __raygen__renderFrame()
 
 extern "C" __global__ void __miss__radiance()
 {
-    // Sky gradient: warm white at the horizon, sky blue at the zenith.
-    const float3 dir = optixGetWorldRayDirection();
-    const float  t   = devClamp01(0.5f * (devNormalize(dir).y + 1.f));
+    const float3 dir = devNormalize(optixGetWorldRayDirection());
 
-    // Blend: t=0 → (1, 1, 1) white; t=1 → (0.3, 0.5, 1.0) sky blue
-    const float r = 1.f - 0.7f * t;
-    const float g = 1.f - 0.5f * t;
-    const float b = 1.f;
+    if (optixLaunchParams.envMap != 0)
+    {
+        // Equirectangular (lat-long) lookup.
+        //
+        // theta: polar angle from +Y.  dir.y=1 → theta=0 → v=0 (zenith, top
+        //        of texture); dir.y=-1 → theta=π → v=1 (nadir, bottom).
+        // phi:   azimuth. atan2(x,-z) so the default -Z camera forward maps to
+        //        phi=0 → u=0.5, placing the front of the scene at image centre.
+        const float kInvPi  = 0.31830988618f;
+        const float kInv2Pi = 0.15915494309f;
 
-    optixSetPayload_0((unsigned int)(r * 255.f));
-    optixSetPayload_1((unsigned int)(g * 255.f));
-    optixSetPayload_2((unsigned int)(b * 255.f));
+        const float theta = acosf(fmaxf(-1.f, fminf(1.f, dir.y)));
+        const float phi   = atan2f(dir.x, -dir.z);
+
+        const float u = phi * kInv2Pi + 0.5f;   // [-π, π] → [0, 1] wrapping
+        const float v = theta * kInvPi;         // [ 0, π] → [0, 1]
+
+        const float4 s = tex2D<float4>(optixLaunchParams.envMap, u, v);
+
+        // Reinhard tone-map: HDR [0, ∞) → [0, 1) — prevents hard clipping on
+        // bright light sources while keeping the overall exposure natural.
+        optixSetPayload_0((unsigned int)(devClamp01(s.x / (s.x + 1.f)) * 255.f));
+        optixSetPayload_1((unsigned int)(devClamp01(s.y / (s.y + 1.f)) * 255.f));
+        optixSetPayload_2((unsigned int)(devClamp01(s.z / (s.z + 1.f)) * 255.f));
+    }
+    else
+    {
+        // Procedural sky: warm white at the horizon, blue at the zenith.
+        const float t = devClamp01(0.5f * (dir.y + 1.f));
+
+        const float r = 1.f - 0.7f * t;
+        const float g = 1.f - 0.5f * t;
+        const float b = 1.f;
+
+        optixSetPayload_0((unsigned int)(r * 255.f));
+        optixSetPayload_1((unsigned int)(g * 255.f));
+        optixSetPayload_2((unsigned int)(b * 255.f));
+    }
 }
 
 // ─── Closest-hit program ──────────────────────────────────────────────────────
@@ -139,6 +167,7 @@ extern "C" __global__ void __closesthit__radiance()
     const float3 v0  = mesh.normals[tri.x];
     const float3 v1  = mesh.normals[tri.y];
     const float3 v2  = mesh.normals[tri.z];
+    //const float2 v3  = mesh.uvs[tri.z];
 
     const float2 coord = optixGetTriangleBarycentrics();
 

@@ -106,6 +106,20 @@ set(TINYGLTF_INSTALL              OFF CACHE BOOL "" FORCE)
 set(TINYGLTF_HEADER_ONLY          ON  CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(tinygltf)
 
+# tinyexr v1.0.9 — single-header EXR loader; bundles miniz for zlib decoding.
+# FetchContent_Populate (not MakeAvailable) downloads only — we do not process
+# tinyexr's CMakeLists because the library is header-only and we define
+# TINYEXR_IMPLEMENTATION ourselves in EnvMap.cpp.
+FetchContent_Declare(tinyexr
+    GIT_REPOSITORY https://github.com/syoyo/tinyexr.git
+    GIT_TAG        v1.0.9
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(tinyexr)
+if(NOT tinyexr_POPULATED)
+    FetchContent_Populate(tinyexr)
+endif()
+
 # nativefiledialog-extended v1.2.1 — native OS file dialog (Open / Save)
 FetchContent_Declare(nfd
     GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
