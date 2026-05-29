@@ -42,11 +42,14 @@ public:
     struct MeshDevicePtrs
     {
         CUdeviceptr positions;  // device float3 array
+        CUdeviceptr normals;    // device float3 array
         CUdeviceptr indices;    // device uint3  array
     };
     MeshDevicePtrs meshDevicePtrs(size_t idx) const
     {
-        return { m_meshBuffers[idx].positions, m_meshBuffers[idx].indices };
+        return { m_meshBuffers[idx].positions,
+                 m_meshBuffers[idx].normals,
+                 m_meshBuffers[idx].indices };
     }
 
 private:
@@ -54,6 +57,7 @@ private:
     struct MeshBuffers
     {
         CUdeviceptr            positions = 0;  // device copy of Mesh::positions
+        CUdeviceptr            normals   = 0;  // device copy of Mesh::normals
         CUdeviceptr            indices   = 0;  // device copy of Mesh::indices
         CUdeviceptr            outputAS  = 0;  // compacted BLAS output buffer
         OptixTraversableHandle blas      = 0;

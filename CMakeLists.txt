@@ -15,8 +15,8 @@ set(CMAKE_CUDA_ARCHITECTURES 75 86 89)
 # ── Project ──────────────────────────────────────────────────────────────────
 project(OptixRaytracer
     VERSION 0.1.0
-    LANGUAGES CXX CUDA
-)
+    LANGUAGES CXX CUDA C  # C is needed for GLAD; declared here so detection
+)                         # runs upfront rather than being triggered by GLFW's nested project()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,6 +42,20 @@ find_package(OpenGL    REQUIRED)
 
 # ── Third-party via FetchContent ──────────────────────────────────────────────
 include(FetchContent)
+
+# On Windows/MSVC, pthreads do not exist.  Pre-populate the three cache
+# variables that CMake's FindThreads module creates when its compile/link
+# probes fail.  The check_*() macros skip any test whose result variable is
+# already defined in the cache, so this avoids three slow probe round-trips
+# (compile + link) on every clean configure.  FindThreads still finds
+# Threads::Threads via the unconditional Windows fallback at the end of the
+# module.  Must be set before any FetchContent_MakeAvailable call that
+# internally calls find_package(Threads) — e.g. GLFW.
+if(WIN32)
+    set(CMAKE_HAVE_LIBC_PTHREAD    0 CACHE INTERNAL "pthread in libc (pre-populated: N/A on MSVC)")
+    set(CMAKE_HAVE_PTHREADS_CREATE 0 CACHE INTERNAL "pthreads lib    (pre-populated: N/A on MSVC)")
+    set(CMAKE_HAVE_PTHREAD_CREATE  0 CACHE INTERNAL "pthread lib     (pre-populated: N/A on MSVC)")
+endif()
 
 # GLFW 3.4 — windowing
 FetchContent_Declare(glfw

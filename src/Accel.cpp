@@ -55,6 +55,7 @@ void Accel::destroy()
     for (MeshBuffers& mb : m_meshBuffers)
     {
         cudaFreePtr(mb.positions);
+        cudaFreePtr(mb.normals);
         cudaFreePtr(mb.indices);
         cudaFreePtr(mb.outputAS);
         mb.blas = 0;
@@ -184,6 +185,16 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
         CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(mb.positions),
                                mesh.positions.data(),
                                posByteSize, cudaMemcpyHostToDevice));
+
+        // Upload vertex normals to device
+        if (!mesh.normals.empty())
+        {
+            const size_t nrmByteSize = mesh.normals.size() * sizeof(float3);
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&mb.normals), nrmByteSize));
+            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(mb.normals),
+                                   mesh.normals.data(),
+                                   nrmByteSize, cudaMemcpyHostToDevice));
+        }
 
         // Upload triangle indices to device
         const size_t idxByteSize = mesh.indices.size() * sizeof(uint3);

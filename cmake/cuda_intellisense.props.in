@@ -1,10 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Injected by CMake via VS_USER_PROPS.
-     Adds the OptiX SDK include directory to Visual Studio's IncludePath so
-     that the C++ IntelliSense parser can resolve <optix.h> in .cu files
-     without requiring NVIDIA NSight Visual Studio Edition. -->
+<!-- Injected by CMake via VS_USER_PROPS (device_programs project only).
+     Fixes Visual Studio C++ IntelliSense for .cu device-code files:
+       1. Adds the OptiX SDK to IncludePath so <optix.h> can be found.
+       2. Defines __CUDACC__ so optix.h takes the #ifdef __CUDACC__ branch
+          and includes optix_device.h, which declares all device intrinsics
+          (optixTrace, optixGetLaunchIndex, optixSetPayload_*, etc.).
+          Without this define the parser takes the optix_host.h branch and
+          every device function appears as an unresolved identifier. -->
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <IncludePath>@OptiX_INCLUDE_DIR@;$(IncludePath)</IncludePath>
   </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>__CUDACC__;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
 </Project>

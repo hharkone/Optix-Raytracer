@@ -48,6 +48,22 @@ float devClamp01(float x)
     return x < 0.f ? 0.f : (x > 1.f ? 1.f : x);
 }
 
+static __forceinline__ __device__
+float devMix(float a, float b, float x)
+{
+    return b * x + a * (1.0f - x);
+}
+
+static __forceinline__ __device__
+float3 devMix(float3 a, float3 b, float x)
+{
+    return make_float3(
+        devMix(a.x, b.x, x),
+        devMix(a.y, b.y, x),
+        devMix(a.z, b.z, x)
+        );
+}
+
 // ─── Ray-generation program ───────────────────────────────────────────────────
 
 extern "C" __global__ void __raygen__renderFrame()
@@ -120,18 +136,18 @@ extern "C" __global__ void __closesthit__radiance()
     const MeshData& mesh = *reinterpret_cast<const MeshData*>(optixGetSbtDataPointer());
 
     const uint3  tri = mesh.indices[optixGetPrimitiveIndex()];
-    const float3 v0  = mesh.positions[tri.x];
-    const float3 v1  = mesh.positions[tri.y];
-    const float3 v2  = mesh.positions[tri.z];
+    const float3 v0  = mesh.normals[tri.x];
+    const float3 v1  = mesh.normals[tri.y];
+    const float3 v2  = mesh.normals[tri.z];
 
-    // Compute face normal in object space from the two edge vectors
-    const float3 e0 = make_float3(v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
-    const float3 e1 = make_float3(v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
-    const float3 objNormal = devNormalize(devCross(e0, e1));
+    const float2 coord = optixGetTriangleBarycentrics();
+
+    const float3 n1 = devMix(v0, v1, coord.x);
+    const float3 n2 = devMix(n1, v2, coord.y);
+    const float3 objNormal = devNormalize(n2);
 
     // Transform to world space using the instance's inverse-transpose transform
-    const float3 worldNormal = devNormalize(
-        optixTransformNormalFromObjectToWorldSpace(objNormal));
+    const float3 worldNormal = devNormalize(optixTransformNormalFromObjectToWorldSpace(objNormal));
 
     // Remap [-1, 1] → [0, 255] for display as an RGB colour
     optixSetPayload_0((unsigned int)((worldNormal.x * 0.5f + 0.5f) * 255.f));

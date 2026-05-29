@@ -381,8 +381,8 @@ void Application::buildSbt()
         {
             const auto ptrs            = m_accel->meshDevicePtrs(i);
             hitRecs[i].data.positions  = reinterpret_cast<const float3*>(ptrs.positions);
+            hitRecs[i].data.normals    = reinterpret_cast<const float3*>(ptrs.normals);
             hitRecs[i].data.indices    = reinterpret_cast<const uint3*>(ptrs.indices);
-            hitRecs[i].data.normals    = nullptr;
             hitRecs[i].data.uvs        = nullptr;
             hitRecs[i].data.materialIndex = meshes[i].materialIndex;
         }
