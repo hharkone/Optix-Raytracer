@@ -29,17 +29,23 @@ target_link_libraries(OptixRaytracer PRIVATE
     nfd
 )
 
-# Ensure PTX is (re)built whenever source shaders change
-add_dependencies(OptixRaytracer device_programs)
-
-# Copy all .ptx files to the executable output directory after each build
-add_custom_command(TARGET OptixRaytracer POST_BUILD
+# Copy PTX shaders next to the executable whenever they are rebuilt.
+#
+# POST_BUILD on OptixRaytracer would only fire when the C++ binary relinks,
+# so a shader-only change would leave a stale .ptx on disk.  Using a
+# dedicated ALL custom target that depends on device_programs ensures the
+# copy runs on every build where the PTX is newer — regardless of whether
+# any C++ source changed.  copy_if_different makes it a no-op when the
+# file is already up to date.
+add_custom_target(copy_ptx ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_OBJECTS:device_programs>
             "$<TARGET_FILE_DIR:OptixRaytracer>/"
+    DEPENDS device_programs
     COMMENT "Copying PTX shaders to output directory"
     COMMAND_EXPAND_LISTS
 )
+add_dependencies(OptixRaytracer copy_ptx)
 
 # Suppress LNK4098 — GLFW is built with release CRT; /NODEFAULTLIB suppresses
 # the "defaultlib LIBCMT conflicts" warning in Debug builds without breaking linkage
