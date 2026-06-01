@@ -654,16 +654,58 @@ void Application::updateCamera()
     const bool rmbFirstFrame = rmb && !m_prevRmb;  // true only on the press event
     m_prevRmb = rmb;
 
-    // ── Rotation — right-drag while the Viewport panel is under the cursor ────
+    // ── Rotation / Orbit — right-drag while the Viewport panel is under the cursor
+    // Ctrl+RMB: orbit the camera position around the world origin at a fixed radius.
+    //           Camera orientation (yaw/pitch) is left unchanged — no snap.
+    // Plain RMB: free-look (rotate orientation in place, position fixed).
     // rmbFirstFrame is skipped to avoid a position-jump on the first drag frame.
     if (rmb && !rmbFirstFrame && m_viewportHovered)
     {
-        m_camYaw   += dx * m_rotSpeed;
-        m_camPitch -= dy * m_rotSpeed;
+        const bool ctrlHeld = glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS
+                           || glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
 
-        // Clamp pitch to just under ±90° to avoid gimbal singularity
-        const float kPitchLimit = 1.5533430f;  // 89 degrees in radians
-        m_camPitch = std::max(-kPitchLimit, std::min(kPitchLimit, m_camPitch));
+        if (ctrlHeld)
+        {
+            // Orbit: move the position along a sphere of the same radius and
+            // derive yaw/pitch from the new position so the camera always looks
+            // at the origin.  Rotation is driven by the mouse delta on the
+            // position — not imposed directly on angles — so there is no snap.
+            const float r = sqrtf(m_camPos.x*m_camPos.x
+                                + m_camPos.y*m_camPos.y
+                                + m_camPos.z*m_camPos.z);
+            if (r > 1e-4f)
+            {
+                float azimuth   = atan2f(m_camPos.x, m_camPos.z);
+                float elevation = asinf(std::max(-1.f, std::min(1.f, m_camPos.y / r)));
+
+                azimuth   -= dx * m_rotSpeed;
+                elevation += dy * m_rotSpeed;
+
+                const float kPoleLimit = 1.5533430f;  // 89°
+                elevation = std::max(-kPoleLimit, std::min(kPoleLimit, elevation));
+
+                m_camPos.x = r * cosf(elevation) * sinf(azimuth);
+                m_camPos.y = r * sinf(elevation);
+                m_camPos.z = r * cosf(elevation) * cosf(azimuth);
+
+                // Apply the equivalent delta to yaw/pitch (yaw = -azimuth,
+                // pitch = -elevation) so they track the orbit continuously
+                // without snapping to an absolute value.
+                m_camYaw   += dx * m_rotSpeed;
+                m_camPitch -= dy * m_rotSpeed;
+                m_camPitch  = std::max(-kPoleLimit, std::min(kPoleLimit, m_camPitch));
+            }
+        }
+        else
+        {
+            // Free-look: update view direction, position stays fixed.
+            m_camYaw   += dx * m_rotSpeed;
+            m_camPitch -= dy * m_rotSpeed;
+
+            // Clamp pitch to just under ±90° to avoid gimbal singularity
+            const float kPitchLimit = 1.5533430f;  // 89 degrees in radians
+            m_camPitch = std::max(-kPitchLimit, std::min(kPitchLimit, m_camPitch));
+        }
     }
 
     // ── Translation — WASD in camera space ───────────────────────────────────
