@@ -295,10 +295,10 @@ static void generateFlatNormals(Mesh& mesh)
 static void loadImage(const tinygltf::Image& gltfImage, Scene& outScene)
 {
     Texture tex;
-    tex.name     = gltfImage.name.empty() ? gltfImage.uri : gltfImage.name;
-    tex.width    = gltfImage.width;
-    tex.height   = gltfImage.height;
-    tex.channels = 4;
+    tex.name   = gltfImage.name.empty() ? gltfImage.uri : gltfImage.name;
+    tex.width  = gltfImage.width;
+    tex.height = gltfImage.height;
+    tex.format = PixelFormat::RGBA8;
 
     if (gltfImage.component == 3)
     {

@@ -107,7 +107,7 @@ Application::~Application()
         m_sbtHitgroupBuffer = 0;
     }
 
-    freeEnvMap(m_envMap);
+    freeTexture(m_envMap);
 
     if (m_accumBuffer)
     {
@@ -625,18 +625,14 @@ void Application::loadScene(const std::string& path)
 void Application::loadEnvMap(const std::string& path)
 {
     m_envMapError.clear();
-    freeEnvMap(m_envMap);   // release previous if any
+    freeTexture(m_envMap);
     m_envMapPath.clear();
 
-    try
+    if (loadEXR(path, m_envMap, m_envMapError))
     {
-        m_envMap     = loadEnvMapEXR(path);
+        uploadToGpu(m_envMap);
         m_envMapPath = std::filesystem::path(path).filename().string();
         m_accumDirty = true;  // new env map = new lighting; clear accumulated samples
-    }
-    catch (const std::exception& e)
-    {
-        m_envMapError = e.what();
     }
 }
 
@@ -824,7 +820,7 @@ bool Application::tick()
             static_cast<unsigned int>(m_viewportHeight));
         m_launchParams.traversable   =
             (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
-        m_launchParams.envMap        = m_envMap.tex;
+        m_launchParams.envMap        = m_envMap.gpuTex;
         m_launchParams.accumBuffer   = m_accumBuffer
             ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
         m_launchParams.sampleIndex   = m_sampleCount;
@@ -965,12 +961,12 @@ bool Application::tick()
             NFD_FreePathU8(outPath);
         }
     }
-    if (m_envMap.tex != 0)
+    if (m_envMap.gpuTex != 0)
     {
         ImGui::SameLine();
         if (ImGui::Button("Clear EXR"))
         {
-            freeEnvMap(m_envMap);
+            freeTexture(m_envMap);
             m_envMapPath.clear();
             m_envMapError.clear();
         }

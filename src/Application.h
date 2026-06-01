@@ -9,9 +9,9 @@
 #include <GLFW/glfw3.h>
 
 #include "Accel.h"
-#include "EnvMap.h"
 #include "LaunchParams.h"
 #include "Scene.h"
+#include "Texture.h"
 
 #include <chrono>
 #include <cstdint>
@@ -100,7 +100,7 @@ private:
     std::string m_loadError;      // empty = no error
 
     // Environment map (lat-long EXR)
-    EnvMapData  m_envMap;          // CUDA array + texture object; zeroed = not loaded
+    Texture     m_envMap;          // RGBA32F; gpuTex == 0 = not loaded
     std::string m_envMapPath;      // display name
     std::string m_envMapError;     // non-empty = last load failed
 
