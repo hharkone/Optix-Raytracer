@@ -18,7 +18,7 @@ extern "C" { __constant__ LaunchParams optixLaunchParams; }
 
 // ─── Tuning ───────────────────────────────────────────────────────────────────
 
-static constexpr int MAX_BOUNCES = 6;
+static constexpr int MAX_BOUNCES = 16;
 
 // ─── Device math helpers ──────────────────────────────────────────────────────
 
@@ -127,21 +127,45 @@ float3 devFresnel(float cosTheta, float3 F0)
     return devAdd(F0, devScale(devSub(make_float3(1.f, 1.f, 1.f), F0), t5));
 }
 
-// Sample GGX microfacet normal in world space.
-// alpha = roughness² (perceptual roughness squared).
+// Sample GGX visible normals (Heitz 2018).
+// Standard hemisphere sampling produces many below-horizon reflections on rough
+// surfaces (causing energy loss).  VNDF conditions on the view direction so the
+// sampled half-vector is always visible, making sub-horizon outcomes nearly
+// impossible and simplifying the MC weight to just F·G1(L).
+//
+// V_local: view direction in tangent space (z = N component, must be > 0).
+// Returns: half-vector in tangent space.
 static __forceinline__ __device__
-float3 devSampleGGX(float u1, float u2, float alpha, float3 N)
+float3 devSampleGGX_VNDF(float3 V_local, float alpha, float u1, float u2)
 {
-    const float phi      = 2.f * 3.14159265358979f * u1;
-    const float cosTheta = sqrtf((1.f - u2)
-                               / fmaxf(1e-7f, 1.f + (alpha*alpha - 1.f) * u2));
-    const float sinTheta = sqrtf(fmaxf(0.f, 1.f - cosTheta*cosTheta));
-    float3 T, B;
-    buildONB(N, T, B);
-    return devNormalize(devAdd(devAdd(
-        devScale(T, sinTheta * cosf(phi)),
-        devScale(B, sinTheta * sinf(phi))),
-        devScale(N, cosTheta)));
+    // Stretch view vector into the hemisphere configuration
+    const float3 Vh = devNormalize(
+        make_float3(alpha * V_local.x, alpha * V_local.y, V_local.z));
+
+    // Orthonormal basis around Vh (T1 ⊥ Vh in the XY plane)
+    const float len2 = Vh.x*Vh.x + Vh.y*Vh.y;
+    const float3 T1  = (len2 > 1e-7f)
+        ? devScale(make_float3(-Vh.y, Vh.x, 0.f), rsqrtf(len2))
+        : make_float3(1.f, 0.f, 0.f);
+    // T2 = cross(Vh, T1) — inline to avoid needing devCross
+    const float3 T2  = make_float3(Vh.y*T1.z - Vh.z*T1.y,
+                                    Vh.z*T1.x - Vh.x*T1.z,
+                                    Vh.x*T1.y - Vh.y*T1.x);
+
+    // Sample a point on the projected area disk
+    const float r   = sqrtf(u1);
+    const float phi = 2.f * 3.14159265358979f * u2;
+    float t1 = r * cosf(phi);
+    float t2 = r * sinf(phi);
+    // Blend between uniform disk (s=0) and projected hemisphere (s=1)
+    const float s = 0.5f * (1.f + Vh.z);
+    t2 = (1.f - s) * sqrtf(fmaxf(0.f, 1.f - t1*t1)) + s * t2;
+
+    // Lift onto hemisphere, stretch back to GGX ellipsoid
+    const float3 Nh = devAdd(devAdd(devScale(T1, t1), devScale(T2, t2)),
+                             devScale(Vh, sqrtf(fmaxf(0.f, 1.f - t1*t1 - t2*t2))));
+    return devNormalize(
+        make_float3(alpha * Nh.x, alpha * Nh.y, fmaxf(1e-6f, Nh.z)));
 }
 
 // Smith G1 shadowing-masking term for GGX.
@@ -203,13 +227,13 @@ extern "C" __global__ void __raygen__renderFrame()
                 devScale(optixLaunchParams.V, ny)),
                 optixLaunchParams.W));
             float3 c = sampleBackground(dir);
-            c.x = c.x / (c.x + 1.f);  // Reinhard
-            c.y = c.y / (c.y + 1.f);
-            c.z = c.z / (c.z + 1.f);
+            c.x = powf(devClamp01(c.x / (c.x + 1.f)), 1.f / 2.2f);  // Reinhard + sRGB
+            c.y = powf(devClamp01(c.y / (c.y + 1.f)), 1.f / 2.2f);
+            c.z = powf(devClamp01(c.z / (c.z + 1.f)), 1.f / 2.2f);
             optixLaunchParams.colorBuffer[fbIdx] = make_uchar4(
-                (unsigned char)(devClamp01(c.x) * 255.f),
-                (unsigned char)(devClamp01(c.y) * 255.f),
-                (unsigned char)(devClamp01(c.z) * 255.f), 255u);
+                (unsigned char)(c.x * 255.f),
+                (unsigned char)(c.y * 255.f),
+                (unsigned char)(c.z * 255.f), 255u);
         }
         else
         {
@@ -287,26 +311,36 @@ extern "C" __global__ void __raygen__renderFrame()
 
         if (rnd(seed) < p_spec)
         {
-            // ── Specular path (GGX microfacet) ────────────────────────────────
-            const float3 H = devSampleGGX(rnd(seed), rnd(seed), alpha, vtx.N);
+            // ── Specular path (GGX-VNDF) ──────────────────────────────────────
+            // Build tangent frame and express the view direction in it.
+            float3 T, B;
+            buildONB(vtx.N, T, B);
+            const float3 V       = devNeg(rayDir);  // outgoing (toward camera)
+            const float3 V_local = make_float3(
+                devDot(V, T), devDot(V, B), fmaxf(1e-4f, devDot(V, vtx.N)));
+
+            // Sample a visible half-vector and transform back to world space.
+            const float3 H_local = devSampleGGX_VNDF(V_local, alpha, rnd(seed), rnd(seed));
+            const float3 H = devNormalize(devAdd(devAdd(
+                devScale(T,      H_local.x),
+                devScale(B,      H_local.y)),
+                devScale(vtx.N,  H_local.z)));
+
             const float3 L = devReflect(rayDir, H);
 
+            // VNDF guarantees L above the surface almost always; the check guards
+            // rare numerical-precision edge cases and is NOT the main energy sink
+            // that standard GGX hemisphere sampling suffered from.
             if (devDot(L, vtx.N) <= 0.f)
             {
-                break;  // microfacet normal sampled below the surface horizon
+                break;
             }
 
-            const float cosVH = fmaxf(1e-4f, devDot(devNeg(rayDir), H));
-            const float cosNH = fmaxf(1e-4f, devDot(vtx.N, H));
-            const float cosNV = fmaxf(1e-4f, cosV);
+            // VNDF MC weight: BRDF/PDF / p_spec = F * G1(L) / p_spec.
+            // G1(V) cancels between BRDF and the VNDF sampling PDF.
             const float cosNL = fmaxf(1e-4f, devDot(vtx.N, L));
-            const float G     = devSmithG1(cosNV, alpha) * devSmithG1(cosNL, alpha);
-
-            // MC weight for specular path:
-            //   (BRDF / PDF) / p_spec = F * G * cosVH / (cosNH * cosNV * p_spec)
-            const float geom = G * cosVH / (cosNH * cosNV);
             throughput = devMul(throughput,
-                devScale(F, geom / fmaxf(1e-4f, p_spec)));
+                devScale(F, devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec)));
             rayDir = L;
         }
         else
@@ -352,15 +386,22 @@ extern "C" __global__ void __raygen__renderFrame()
     const float  inv = 1.f / (float)(optixLaunchParams.sampleIndex + 1);
     float3 avg = make_float3(acc.x * inv, acc.y * inv, acc.z * inv);
 
-    // Reinhard: maps [0, ∞) → [0, 1)
+    // Reinhard: maps [0, ∞) → [0, 1)  (result is still linear)
     avg.x = avg.x / (avg.x + 1.f);
     avg.y = avg.y / (avg.y + 1.f);
     avg.z = avg.z / (avg.z + 1.f);
 
+    // Linear → sRGB (γ ≈ 1/2.2): the display buffer is read by the monitor as sRGB,
+    // so we must gamma-encode before writing.  powf(x, 1/2.2) approximates the
+    // standard sRGB OETF well enough for a path tracer output.
+    avg.x = powf(devClamp01(avg.x), 1.f / 2.2f);
+    avg.y = powf(devClamp01(avg.y), 1.f / 2.2f);
+    avg.z = powf(devClamp01(avg.z), 1.f / 2.2f);
+
     optixLaunchParams.colorBuffer[fbIdx] = make_uchar4(
-        (unsigned char)(devClamp01(avg.x) * 255.f),
-        (unsigned char)(devClamp01(avg.y) * 255.f),
-        (unsigned char)(devClamp01(avg.z) * 255.f),
+        (unsigned char)(avg.x * 255.f),
+        (unsigned char)(avg.y * 255.f),
+        (unsigned char)(avg.z * 255.f),
         255u);
 }
 

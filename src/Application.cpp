@@ -552,6 +552,26 @@ void Application::resizeFramebuffer(int w, int h)
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+// ─── Material upload ─────────────────────────────────────────────────────────
+
+void Application::uploadMaterials()
+{
+    const auto& mats = m_scene->materials();
+    if (mats.empty())
+    {
+        return;
+    }
+    const size_t matBytes = mats.size() * sizeof(MaterialData);
+
+    // Allocate on first call or if the buffer is gone; otherwise reuse.
+    if (!m_materialsBuffer)
+    {
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_materialsBuffer), matBytes));
+    }
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_materialsBuffer),
+                           mats.data(), matBytes, cudaMemcpyHostToDevice));
+}
+
 // ─── Scene loading ────────────────────────────────────────────────────────────
 
 void Application::loadScene(const std::string& path)
@@ -584,20 +604,13 @@ void Application::loadScene(const std::string& path)
         m_scene->clear();  // discard any partial data from a failed load
     }
 
-    // Upload materials to device so the closest-hit shader can look up albedo.
+    // Upload materials to device so the closest-hit shader can look up properties.
     if (m_materialsBuffer)
     {
         cudaFree(reinterpret_cast<void*>(m_materialsBuffer));
         m_materialsBuffer = 0;
     }
-    const auto& mats = m_scene->materials();
-    if (!mats.empty())
-    {
-        const size_t matBytes = mats.size() * sizeof(MaterialData);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_materialsBuffer), matBytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_materialsBuffer),
-                               mats.data(), matBytes, cudaMemcpyHostToDevice));
-    }
+    uploadMaterials();
 
     m_accumDirty = true;  // scene changed — clear accumulated samples
     buildSbt();  // rebuild with new mesh count (0 if load failed or no geometry)
@@ -1097,6 +1110,64 @@ bool Application::tick()
     {
         ImGui::TextColored(ImVec4(1.f, 0.35f, 0.2f, 1.f), "Shader error — last good pipeline active");
         ImGui::TextWrapped("%s", m_shaderError.c_str());
+    }
+
+    ImGui::End();
+
+    // ── Materials panel ───────────────────────────────────────────────────────
+    ImGui::Begin("Materials");
+
+    auto& mats = m_scene->materials();
+    bool anyMatChanged = false;
+
+    if (mats.empty())
+    {
+        ImGui::TextDisabled("No materials loaded");
+    }
+    else
+    {
+        for (int i = 0; i < static_cast<int>(mats.size()); ++i)
+        {
+            ImGui::PushID(i);
+
+            const std::string& rawName = m_scene->materialName(i);
+            const std::string  header  = rawName.empty()
+                                       ? ("Material " + std::to_string(i))
+                                       : rawName;
+
+            if (ImGui::CollapsingHeader(header.c_str()))
+            {
+                if (ImGui::ColorEdit3("Albedo",   &mats[i].albedo.x))
+                {
+                    anyMatChanged = true;
+                }
+                if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.f, 1.f))
+                {
+                    anyMatChanged = true;
+                }
+                if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.f, 1.f))
+                {
+                    anyMatChanged = true;
+                }
+                if (ImGui::ColorEdit3("Emission",  &mats[i].emission.x))
+                {
+                    anyMatChanged = true;
+                }
+                if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale,
+                                     0.1f, 0.f, 1000.f, "%.2f"))
+                {
+                    anyMatChanged = true;
+                }
+            }
+
+            ImGui::PopID();
+        }
+    }
+
+    if (anyMatChanged)
+    {
+        uploadMaterials();
+        m_accumDirty = true;
     }
 
     ImGui::End();

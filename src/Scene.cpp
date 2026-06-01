@@ -32,6 +32,11 @@ const std::vector<MaterialData>& Scene::materials() const
     return m_materials;
 }
 
+std::vector<MaterialData>& Scene::materials()
+{
+    return m_materials;
+}
+
 const std::vector<Texture>& Scene::textures() const
 {
     return m_textures;

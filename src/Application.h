@@ -65,6 +65,7 @@ private:
 
     void loadScene(const std::string& path);
     void loadEnvMap(const std::string& path);
+    void uploadMaterials();  // (re)upload host materials to the GPU buffer
 
     static void optixLogCallback(unsigned int level,
                                  const char*  tag,

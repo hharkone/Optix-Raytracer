@@ -27,6 +27,7 @@ public:
 
     const std::vector<Mesh>&         meshes()                   const;
     const std::vector<MaterialData>& materials()                const;
+    std::vector<MaterialData>&       materials();               // mutable for in-place editing
     const std::vector<Texture>&      textures()                 const;
     const std::string&               materialName(int index)    const;
 
