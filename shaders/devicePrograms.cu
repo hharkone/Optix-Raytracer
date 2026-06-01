@@ -22,11 +22,14 @@ static constexpr int MAX_BOUNCES = 6;
 
 // ─── Device math helpers ──────────────────────────────────────────────────────
 
-static __forceinline__ __device__ float  devDot(float3 a, float3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-static __forceinline__ __device__ float3 devAdd(float3 a, float3 b) { return make_float3(a.x+b.x, a.y+b.y, a.z+b.z); }
-static __forceinline__ __device__ float3 devMul(float3 a, float3 b) { return make_float3(a.x*b.x, a.y*b.y, a.z*b.z); }
-static __forceinline__ __device__ float3 devScale(float3 v, float s) { return make_float3(v.x*s, v.y*s, v.z*s); }
-static __forceinline__ __device__ float  devClamp01(float x)        { return x < 0.f ? 0.f : (x > 1.f ? 1.f : x); }
+static __forceinline__ __device__ float  devDot(float3 a, float3 b)   { return a.x*b.x + a.y*b.y + a.z*b.z; }
+static __forceinline__ __device__ float3 devAdd(float3 a, float3 b)   { return make_float3(a.x+b.x, a.y+b.y, a.z+b.z); }
+static __forceinline__ __device__ float3 devSub(float3 a, float3 b)   { return make_float3(a.x-b.x, a.y-b.y, a.z-b.z); }
+static __forceinline__ __device__ float3 devMul(float3 a, float3 b)   { return make_float3(a.x*b.x, a.y*b.y, a.z*b.z); }
+static __forceinline__ __device__ float3 devScale(float3 v, float s)  { return make_float3(v.x*s, v.y*s, v.z*s); }
+static __forceinline__ __device__ float3 devNeg(float3 v)             { return make_float3(-v.x, -v.y, -v.z); }
+static __forceinline__ __device__ float  devClamp01(float x)          { return x < 0.f ? 0.f : (x > 1.f ? 1.f : x); }
+static __forceinline__ __device__ float  devLuminance(float3 c)       { return 0.2126f*c.x + 0.7152f*c.y + 0.0722f*c.z; }
 
 static __forceinline__ __device__
 float3 devNormalize(float3 v)
@@ -50,10 +53,13 @@ float3 devMix(float3 a, float3 b, float t)
 
 struct PathVertex
 {
-    float3 pos;     // world-space surface point
-    float3 N;       // world-space shading normal (unit)
-    float3 albedo;  // Lambertian surface colour
-    int    hit;     // 1 = geometry hit, 0 = ray escaped to background
+    float3 pos;       // world-space surface point
+    float3 N;         // world-space shading normal (unit)
+    float3 albedo;    // base colour
+    float3 emission;  // pre-scaled emissive radiance (emission * emissionScale)
+    float  roughness; // perceptual roughness [0, 1]
+    float  metallic;  // metallic factor [0, 1]
+    int    hit;       // 1 = geometry hit, 0 = ray escaped to background
 };
 
 static __forceinline__ __device__
@@ -108,6 +114,50 @@ void buildONB(float3 N, float3& T, float3& B)
     const float b =  N.x * N.y * a;
     T = make_float3(1.f + s*N.x*N.x*a, s*b, -s*N.x);
     B = make_float3(b, s + N.y*N.y*a, -N.y);
+}
+
+// ─── PBR helpers ─────────────────────────────────────────────────────────────
+
+// Schlick Fresnel — F0 is the reflectance at normal incidence.
+static __forceinline__ __device__
+float3 devFresnel(float cosTheta, float3 F0)
+{
+    const float t  = 1.f - devClamp01(cosTheta);
+    const float t5 = t * t * t * t * t;
+    return devAdd(F0, devScale(devSub(make_float3(1.f, 1.f, 1.f), F0), t5));
+}
+
+// Sample GGX microfacet normal in world space.
+// alpha = roughness² (perceptual roughness squared).
+static __forceinline__ __device__
+float3 devSampleGGX(float u1, float u2, float alpha, float3 N)
+{
+    const float phi      = 2.f * 3.14159265358979f * u1;
+    const float cosTheta = sqrtf((1.f - u2)
+                               / fmaxf(1e-7f, 1.f + (alpha*alpha - 1.f) * u2));
+    const float sinTheta = sqrtf(fmaxf(0.f, 1.f - cosTheta*cosTheta));
+    float3 T, B;
+    buildONB(N, T, B);
+    return devNormalize(devAdd(devAdd(
+        devScale(T, sinTheta * cosf(phi)),
+        devScale(B, sinTheta * sinf(phi))),
+        devScale(N, cosTheta)));
+}
+
+// Smith G1 shadowing-masking term for GGX.
+static __forceinline__ __device__
+float devSmithG1(float cosTheta, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float c2 = cosTheta * cosTheta;
+    return 2.f * cosTheta / (cosTheta + sqrtf(a2 + (1.f - a2) * c2));
+}
+
+// Reflect incident direction v around surface normal n.
+static __forceinline__ __device__
+float3 devReflect(float3 v, float3 n)
+{
+    return devSub(v, devScale(n, 2.f * devDot(v, n)));
 }
 
 // ─── Background / environment map ────────────────────────────────────────────
@@ -215,8 +265,67 @@ extern "C" __global__ void __raygen__renderFrame()
             break;
         }
 
-        // Multiply throughput by albedo (BRDF/PDF cancels for cosine sampling)
-        throughput = devMul(throughput, vtx.albedo);
+        // ── Emission ──────────────────────────────────────────────────────────
+        radiance = devAdd(radiance, devMul(throughput, vtx.emission));
+
+        // ── PBR material properties ───────────────────────────────────────────
+        const float3 albedo    = vtx.albedo;
+        const float  roughness = vtx.roughness;
+        const float  metallic  = vtx.metallic;
+        // Remap perceptual roughness → GGX alpha; clamp to avoid singularities.
+        const float  alpha     = fmaxf(roughness * roughness, 1e-3f);
+
+        // F0: dielectrics reflect ~4 % at normal incidence; metals reflect albedo.
+        const float3 F0  = devMix(make_float3(0.04f, 0.04f, 0.04f), albedo, metallic);
+        const float  cosV = fmaxf(0.f, devDot(vtx.N, devNeg(rayDir)));
+        const float3 F    = devFresnel(cosV, F0);
+
+        // Probability of taking the specular path.
+        // Metals are always specular (lerp to 1) so 1–p_spec never underflows.
+        const float p_spec = devClamp01(
+            (1.f - metallic) * devLuminance(F) + metallic);
+
+        if (rnd(seed) < p_spec)
+        {
+            // ── Specular path (GGX microfacet) ────────────────────────────────
+            const float3 H = devSampleGGX(rnd(seed), rnd(seed), alpha, vtx.N);
+            const float3 L = devReflect(rayDir, H);
+
+            if (devDot(L, vtx.N) <= 0.f)
+            {
+                break;  // microfacet normal sampled below the surface horizon
+            }
+
+            const float cosVH = fmaxf(1e-4f, devDot(devNeg(rayDir), H));
+            const float cosNH = fmaxf(1e-4f, devDot(vtx.N, H));
+            const float cosNV = fmaxf(1e-4f, cosV);
+            const float cosNL = fmaxf(1e-4f, devDot(vtx.N, L));
+            const float G     = devSmithG1(cosNV, alpha) * devSmithG1(cosNL, alpha);
+
+            // MC weight for specular path:
+            //   (BRDF / PDF) / p_spec = F * G * cosVH / (cosNH * cosNV * p_spec)
+            const float geom = G * cosVH / (cosNH * cosNV);
+            throughput = devMul(throughput,
+                devScale(F, geom / fmaxf(1e-4f, p_spec)));
+            rayDir = L;
+        }
+        else
+        {
+            // ── Diffuse path (Lambertian, cosine-weighted hemisphere) ──────────
+            // Weight = (1-F) * albedo / (1 - p_spec)
+            // BRDF/PDF cancels for cosine sampling → weight = albedo.
+            float3 T, B;
+            buildONB(vtx.N, T, B);
+            const float3 localDir = cosineSampleHemisphere(rnd(seed), rnd(seed));
+            rayDir = devNormalize(devAdd(devAdd(
+                devScale(T,      localDir.x),
+                devScale(B,      localDir.y)),
+                devScale(vtx.N,  localDir.z)));
+
+            const float3 kD = devMul(devSub(make_float3(1.f, 1.f, 1.f), F), albedo);
+            throughput = devMul(throughput,
+                devScale(kD, 1.f / fmaxf(1e-4f, 1.f - p_spec)));
+        }
 
         // Russian roulette: randomly terminate dim paths to keep variance bounded
         if (bounce >= 3)
@@ -229,16 +338,7 @@ extern "C" __global__ void __raygen__renderFrame()
             throughput = devScale(throughput, 1.f / fmaxf(maxThr, 1e-6f));
         }
 
-        // Sample next direction: cosine-weighted hemisphere around N
-        float3 T, B;
-        buildONB(vtx.N, T, B);
-        const float3 localDir = cosineSampleHemisphere(rnd(seed), rnd(seed));
-        rayDir = devNormalize(devAdd(devAdd(
-            devScale(T,     localDir.x),
-            devScale(B,     localDir.y)),
-            devScale(vtx.N, localDir.z)));
-
-        // Offset ray origin from the surface to prevent self-intersection
+        // Offset ray origin along normal to prevent self-intersection
         rayOrig = devAdd(vtx.pos, devScale(vtx.N, 1e-3f));
     }
 
@@ -299,14 +399,21 @@ extern "C" __global__ void __closesthit__radiance()
     const float  t   = optixGetRayTmax();
     vtx->pos = devAdd(o, devScale(d, t));
 
-    // ── Material albedo ────────────────────────────────────────────────────────
+    // ── Material properties ────────────────────────────────────────────────────
     if (optixLaunchParams.materials && mesh.materialIndex >= 0)
     {
-        vtx->albedo = optixLaunchParams.materials[mesh.materialIndex].albedo;
+        const MaterialData& mat = optixLaunchParams.materials[mesh.materialIndex];
+        vtx->albedo    = mat.albedo;
+        vtx->roughness = mat.roughness;
+        vtx->metallic  = mat.metallic;
+        vtx->emission  = devScale(mat.emission, mat.emissionScale);
     }
     else
     {
-        vtx->albedo = make_float3(0.8f, 0.8f, 0.8f);
+        vtx->albedo    = make_float3(0.8f, 0.8f, 0.8f);
+        vtx->roughness = 0.5f;
+        vtx->metallic  = 0.f;
+        vtx->emission  = make_float3(0.f, 0.f, 0.f);
     }
 
     vtx->hit = 1;
