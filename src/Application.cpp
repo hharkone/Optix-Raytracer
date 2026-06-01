@@ -174,7 +174,7 @@ void Application::initWindow(const std::string& title)
     }
 
     glfwMakeContextCurrent(m_window);
-    glfwSwapInterval(1);
+    glfwSwapInterval(0);  // 0 = no VSync — present immediately for maximum throughput
 }
 
 void Application::initOpenGL()
