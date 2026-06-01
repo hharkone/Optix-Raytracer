@@ -44,6 +44,7 @@ target_link_libraries(OptixRaytracer PRIVATE
 # any C++ source changed.  copy_if_different makes it a no-op when the
 # file is already up to date.
 add_custom_target(copy_ptx ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:OptixRaytracer>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_OBJECTS:device_programs>
             "$<TARGET_FILE_DIR:OptixRaytracer>/"

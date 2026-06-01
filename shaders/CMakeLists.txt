@@ -5,11 +5,12 @@
 
 add_library(device_programs OBJECT
     devicePrograms.cu
+    device_math.h
     LaunchParams.h
     SceneData.h
 )
 
-source_group("Header Files" FILES LaunchParams.h SceneData.h)
+source_group("Header Files" FILES device_math.h LaunchParams.h SceneData.h)
 source_group("Source Files" FILES devicePrograms.cu)
 
 set_property(TARGET device_programs PROPERTY CUDA_PTX_COMPILATION ON)
