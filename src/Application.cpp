@@ -411,7 +411,9 @@ void Application::checkShaderHotReload()
     std::error_code ec;
     const auto newWriteTime = std::filesystem::last_write_time(ptxPath, ec);
     if (ec || newWriteTime == m_ptxWriteTime)
+    {
         return;
+    }
 
     // Stamp first — prevents hammering reloadPipeline every frame if the PTX
     // stays broken (the timestamp will have moved but won't keep changing).
@@ -1043,7 +1045,9 @@ bool Application::tick()
     ImGui::Separator();
     ImGui::Text("Samples: %u", m_sampleCount);
     if (ImGui::Button("Reset Accumulation"))
+    {
         m_accumDirty = true;
+    }
 
     ImGui::Separator();
     if (m_shaderError.empty())

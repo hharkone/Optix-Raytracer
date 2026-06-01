@@ -222,7 +222,10 @@ extern "C" __global__ void __raygen__renderFrame()
         if (bounce >= 3)
         {
             const float maxThr = fmaxf(throughput.x, fmaxf(throughput.y, throughput.z));
-            if (rnd(seed) > maxThr) break;
+            if (rnd(seed) > maxThr)
+            {
+                break;
+            }
             throughput = devScale(throughput, 1.f / fmaxf(maxThr, 1e-6f));
         }
 
@@ -294,12 +297,17 @@ extern "C" __global__ void __closesthit__radiance()
     const float3 d   = optixGetWorldRayDirection();
     const float3 o   = optixGetWorldRayOrigin();
     const float  t   = optixGetRayTmax();
-    vtx->pos = make_float3(o.x + t*d.x, o.y + t*d.y, o.z + t*d.z);
+    vtx->pos = devAdd(o, devScale(d, t));
 
     // ── Material albedo ────────────────────────────────────────────────────────
-    vtx->albedo = make_float3(0.8f, 0.8f, 0.8f);
     if (optixLaunchParams.materials && mesh.materialIndex >= 0)
+    {
         vtx->albedo = optixLaunchParams.materials[mesh.materialIndex].albedo;
+    }
+    else
+    {
+        vtx->albedo = make_float3(0.8f, 0.8f, 0.8f);
+    }
 
     vtx->hit = 1;
 }

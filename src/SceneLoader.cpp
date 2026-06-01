@@ -465,10 +465,14 @@ bool loadGltfFile(const std::string& path, Scene& outScene, std::string& outErro
     const int textureOffset  = static_cast<int>(outScene.textures().size());
 
     for (const tinygltf::Image& img : model.images)
+    {
         loadImage(img, outScene);
+    }
 
     for (const tinygltf::Material& mat : model.materials)
+    {
         outScene.addMaterial(buildMaterial(mat, model, textureOffset), mat.name);
+    }
 
     if (model.materials.empty())
     {
@@ -476,7 +480,9 @@ bool loadGltfFile(const std::string& path, Scene& outScene, std::string& outErro
     }
 
     for (const tinygltf::Mesh& gltfMesh : model.meshes)
+    {
         loadMesh(gltfMesh, model, materialOffset, outScene);
+    }
 
     // Camera — walk the default scene's node tree; keep Scene's default if none found
     if (!model.scenes.empty())
