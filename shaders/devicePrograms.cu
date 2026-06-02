@@ -54,6 +54,7 @@ struct PathVertex
     float  metallic;     // metallic factor [0, 1]
     float  transmission; // 0 = opaque, 1 = fully transmissive
     float  ior;          // index of refraction
+    float  t;            // ray travel distance to this hit (for Beer-Lambert absorption)
     int    hit;          // 1 = geometry hit, 0 = ray escaped to background
 };
 
@@ -275,6 +276,10 @@ extern "C" __global__ void __raygen__renderFrame()
     float3 throughput = make_float3(1.f, 1.f, 1.f);
     float3 radiance   = make_float3(0.f, 0.f, 0.f);
 
+    // Beer-Lambert absorption: -log(albedo) per unit distance.
+    // Set when entering a transmissive medium, cleared on exit, unchanged on TIR.
+    float3 absorb = make_float3(0.04f, 0.01f, 0.04f);
+
     for (int bounce = 0; bounce < MAX_BOUNCES; ++bounce)
     {
         PathVertex vtx;
@@ -297,6 +302,12 @@ extern "C" __global__ void __raygen__renderFrame()
             radiance += throughput * sampleBackground(rayDir);
             break;
         }
+
+        // ── Beer-Lambert absorption ───────────────────────────────────────────
+        // Apply exp(-σ·t) for each channel; σ = -log(albedo) set when entering glass.
+        throughput.x *= expf(-absorb.x * vtx.t);
+        throughput.y *= expf(-absorb.y * vtx.t);
+        throughput.z *= expf(-absorb.z * vtx.t);
 
         // ── Emission ──────────────────────────────────────────────────────────
         radiance += throughput * vtx.emission;
@@ -402,6 +413,23 @@ extern "C" __global__ void __raygen__renderFrame()
                     throughput *= devSmithG1(cosT, alpha);
                 }
 
+                // Update Beer-Lambert absorption state.
+                // On true refraction: entering glass starts absorbing, exiting stops.
+                // On TIR: stay in the same medium — absorb is unchanged.
+                if (refracted)
+                {
+                    if (entering)
+                    {
+                        absorb.x = -logf(fmaxf(vtx.albedo.x, 1e-6f));
+                        absorb.y = -logf(fmaxf(vtx.albedo.y, 1e-6f));
+                        absorb.z = -logf(fmaxf(vtx.albedo.z, 1e-6f));
+                    }
+                    else
+                    {
+                        absorb = make_float3(0.f, 0.f, 0.f);
+                    }
+                }
+
                 // On TIR devRefract writes the reflected direction; offset stays on
                 // the same side.  On true refraction offset to the far side.
                 rayOrig = vtx.pos + faceN * (refracted ? -1e-3f : 1e-3f);
@@ -471,9 +499,10 @@ extern "C" __global__ void __closesthit__radiance()
 
     vtx->N = devNormalize(optixTransformNormalFromObjectToWorldSpace(n_obj));
 
-    // ── World-space hit point ─────────────────────────────────────────────────
+    // ── World-space hit point and travel distance ─────────────────────────────
+    vtx->t   = optixGetRayTmax();
     vtx->pos = optixGetWorldRayOrigin()
-             + optixGetWorldRayDirection() * optixGetRayTmax();
+             + optixGetWorldRayDirection() * vtx->t;
 
     // ── Material ──────────────────────────────────────────────────────────────
     if (optixLaunchParams.materials && mesh.materialIndex >= 0)
