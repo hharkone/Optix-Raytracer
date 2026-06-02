@@ -178,6 +178,25 @@ float3 devReflect(float3 v, float3 n)
     return v - n * (2.f * devDot(v, n));
 }
 
+// Refract incident direction v through a surface with normal n (opposing v) and
+// relative IOR eta = n1/n2.  Returns true on successful refraction and writes the
+// transmitted direction to `out`.  Returns false on total internal reflection and
+// writes the mirrored direction to `out` so the caller can continue the path.
+static __forceinline__ __device__
+bool devRefract(float3 v, float3 n, float eta, float3& out)
+{
+    const float cosI  = devDot(-v, n);                        // positive: n opposes v
+    const float sinT2 = eta * eta * fmaxf(0.f, 1.f - cosI * cosI);
+    if (sinT2 >= 1.f)                                         // total internal reflection
+    {
+        out = devReflect(v, n);
+        return false;
+    }
+    const float cosT = sqrtf(1.f - sinT2);
+    out = devNormalize(v * eta + n * (eta * cosI - cosT));    // Snell's law, vector form
+    return true;
+}
+
 // ─── Background / environment map ────────────────────────────────────────────
 
 static __forceinline__ __device__
@@ -282,109 +301,90 @@ extern "C" __global__ void __raygen__renderFrame()
         // ── Emission ──────────────────────────────────────────────────────────
         radiance += throughput * vtx.emission;
 
-        // ── Stochastic lobe selection ─────────────────────────────────────────
-        const float alpha   = fmaxf(vtx.roughness * vtx.roughness, 1e-3f);
-        const float p_trans = devClamp01(vtx.transmission);
+        // ── Three-way stochastic lobe selection ──────────────────────────────
+        //
+        // Decision tree (single random draw per level):
+        //   1. specular   — probability p_spec (metallic / Fresnel)
+        //   2. diffuse    — probability (1 - p_spec) * (1 - transmission)
+        //   3. refraction — probability (1 - p_spec) *      transmission
+        //
+        // Both non-specular lobes share the same throughput weight
+        //   kNS = (1-F) * albedo / (1-p_spec)
+        // because transmission only changes direction, not energy.
 
-        if (p_trans > 0.f && rnd(seed) < p_trans)
+        const float alpha = fmaxf(vtx.roughness * vtx.roughness, 1e-3f);
+
+        // Front-facing normal: always points toward the incoming ray.
+        // vtx.N is the geometry normal (outward), which opposes the ray when the
+        // ray is inside a transmissive object.  Using vtx.N directly for cosV
+        // would yield a negative dot product → clamp to 0 → Fresnel = 1 → p_spec = 1
+        // → kNS = (1-1)·albedo / 0 = 0, killing every interior bounce.
+        const float3 Nf = (devDot(vtx.N, -rayDir) >= 0.f) ? vtx.N : -vtx.N;
+
+        // Fresnel — evaluated once, shared by all lobes
+        const float  r0_d  = (1.f - vtx.ior) / (1.f + vtx.ior);
+        const float3 F0    = devMix(make_float3(r0_d*r0_d, r0_d*r0_d, r0_d*r0_d),
+                                    vtx.albedo, vtx.metallic);
+        const float  cosV  = devDot(Nf, -rayDir);  // always positive by construction
+        const float3 F     = devFresnel(cosV, F0);
+
+        // Specular probability — metals always specular
+        const float p_spec = devClamp01((1.f - vtx.metallic) * devLuminance(F) + vtx.metallic);
+
+        if (rnd(seed) < p_spec)
         {
-            // ── Transmission / refraction branch ──────────────────────────────
-            throughput *= 1.f / fmaxf(p_trans, 1e-6f);
+            // ── 1. Specular reflection (GGX-VNDF) ────────────────────────────
+            float3 T, B;
+            buildONB(Nf, T, B);
 
-            // Determine if the ray is entering or exiting the medium.
-            // OptiX does not flip normals on back-face hits, so the sign of
-            // dot(rayDir, N) is the reliable entering/exiting discriminant.
-            const bool   entering = (devDot(rayDir, vtx.N) < 0.f);
-            const float3 faceN    = entering ? vtx.N : -vtx.N; // opposes rayDir
-            const float  eta      = entering ? (1.f / vtx.ior) : vtx.ior;
-            const float  cosI     = devDot(-rayDir, faceN);     // always positive
+            const float3 V       = -rayDir;
+            const float3 V_local = make_float3(
+                devDot(V, T), devDot(V, B), fmaxf(1e-4f, devDot(V, Nf)));
 
-            // sin²(θt) via Snell's law — if ≥ 1, total internal reflection
-            const float sinT2 = eta * eta * fmaxf(0.f, 1.f - cosI * cosI);
+            const float3 H_local = devSampleGGX_VNDF(V_local, alpha, rnd(seed), rnd(seed));
+            const float3 H       = devNormalize(T * H_local.x + B * H_local.y + Nf * H_local.z);
+            const float3 L       = devReflect(rayDir, H);
 
-            if (sinT2 >= 1.f)
-            {
-                // Total internal reflection — mirror inside the medium
-                rayDir  = devReflect(rayDir, faceN);
-                rayOrig = vtx.pos + faceN * 1e-3f;
-            }
-            else
-            {
-                // Fresnel for dielectrics: F0 derived from IOR only
-                const float  r0  = (1.f - vtx.ior) / (1.f + vtx.ior);
-                const float3 F0d = make_float3(r0*r0, r0*r0, r0*r0);
-                const float3 F   = devFresnel(cosI, F0d);
-                const float  lF  = devLuminance(F);
+            if (devDot(L, Nf) <= 0.f) break;
 
-                if (rnd(seed) < lF)
-                {
-                    // Fresnel reflection at the interface
-                    throughput *= F * (1.f / fmaxf(lF, 1e-6f));
-                    rayDir  = devReflect(rayDir, faceN);
-                    rayOrig = vtx.pos + faceN * 1e-3f;
-                }
-                else
-                {
-                    // True refraction: Snell's law in vector form
-                    const float  cosT = sqrtf(1.f - sinT2);
-                    rayDir  = devNormalize(rayDir * eta + faceN * (eta * cosI - cosT));
-                    throughput *= (make_float3(1.f, 1.f, 1.f) - F)
-                                * (1.f / fmaxf(1.f - lF, 1e-6f));
-                    throughput *= vtx.albedo;            // colored-glass tint
-                    rayOrig = vtx.pos - faceN * 1e-3f;  // offset to the other side
-                }
-            }
+            // Weight = F * G1(L) / p_spec  (G1(V) cancels with the VNDF PDF)
+            const float cosNL = fmaxf(1e-4f, devDot(Nf, L));
+            throughput *= F * (devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec));
+            rayDir  = L;
+            rayOrig = vtx.pos + Nf * 1e-3f;
         }
         else
         {
-            // ── Opaque PBR branch (specular + diffuse) ────────────────────────
-            throughput *= 1.f / fmaxf(1.f - p_trans, 1e-6f);
+            // Non-specular weight — identical for both sub-lobes
+            const float3 kNS = (make_float3(1.f, 1.f, 1.f) - F) * vtx.albedo
+                               * (1.f / fmaxf(1e-4f, 1.f - p_spec));
+            throughput *= kNS;
 
-            // F0: dielectrics use IOR-derived reflectance, metals use albedo colour
-            const float  r0_d  = (1.f - vtx.ior) / (1.f + vtx.ior);
-            const float3 F0    = devMix(make_float3(r0_d * r0_d, r0_d * r0_d, r0_d * r0_d),
-                                        vtx.albedo, vtx.metallic);
-            const float  cosV  = fmaxf(0.f, devDot(vtx.N, -rayDir));
-            const float3 F     = devFresnel(cosV, F0);
+            const float p_trans = devClamp01(vtx.transmission);
 
-            // Specular probability; metals forced to 1 so 1–p_spec never underflows.
-            const float p_spec = devClamp01((1.f - vtx.metallic) * devLuminance(F) + vtx.metallic);
-
-            if (rnd(seed) < p_spec)
+            if (rnd(seed) > p_trans)
             {
-                // ── Specular (GGX-VNDF) ───────────────────────────────────────
+                // ── 2. Diffuse (Lambertian, cosine-weighted) ──────────────────
                 float3 T, B;
-                buildONB(vtx.N, T, B);
-
-                const float3 V       = -rayDir;
-                const float3 V_local = make_float3(
-                    devDot(V, T), devDot(V, B), fmaxf(1e-4f, devDot(V, vtx.N)));
-
-                const float3 H_local = devSampleGGX_VNDF(V_local, alpha, rnd(seed), rnd(seed));
-                const float3 H       = devNormalize(T * H_local.x + B * H_local.y + vtx.N * H_local.z);
-                const float3 L       = devReflect(rayDir, H);
-
-                if (devDot(L, vtx.N) <= 0.f) break;
-
-                // Weight = F * G1(L) / p_spec  (G1(V) cancels with the VNDF PDF)
-                const float cosNL = fmaxf(1e-4f, devDot(vtx.N, L));
-                throughput *= F * (devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec));
-                rayDir = L;
+                buildONB(Nf, T, B);
+                const float3 d = cosineSampleHemisphere(rnd(seed), rnd(seed));
+                rayDir  = devNormalize(T * d.x + B * d.y + Nf * d.z);
+                rayOrig = vtx.pos + Nf * 1e-3f;
             }
             else
             {
-                // ── Diffuse (Lambertian, cosine-weighted) ─────────────────────
-                float3 T, B;
-                buildONB(vtx.N, T, B);
-                const float3 d = cosineSampleHemisphere(rnd(seed), rnd(seed));
-                rayDir = devNormalize(T * d.x + B * d.y + vtx.N * d.z);
-
-                // Weight = (1-F) * albedo / (1-p_spec)
-                const float3 kD = (make_float3(1.f, 1.f, 1.f) - F) * vtx.albedo;
-                throughput *= kD * (1.f / fmaxf(1e-4f, 1.f - p_spec));
+                // ── 3. Refraction (Snell's law) ───────────────────────────────
+                // Use the original vtx.N (not Nf) to detect entering vs exiting —
+                // vtx.N is the true outward geometry normal, which is what matters
+                // for the physical entering/exiting test.
+                const bool   entering  = (devDot(rayDir, vtx.N) < 0.f);
+                const float3 faceN     = entering ? vtx.N : -vtx.N;
+                const float  eta       = entering ? (1.f / vtx.ior) : vtx.ior;
+                const bool   refracted = devRefract(rayDir, faceN, eta, rayDir);
+                // On TIR devRefract writes the reflected direction; offset stays on
+                // the same side.  On true refraction offset to the far side.
+                rayOrig = vtx.pos + faceN * (refracted ? -1e-3f : 1e-3f);
             }
-
-            rayOrig = vtx.pos + vtx.N * 1e-3f;
         }
 
         // Russian roulette: stochastically terminate dim paths (all branches)
