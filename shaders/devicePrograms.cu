@@ -192,9 +192,9 @@ float3 sampleBackground(float3 dir)
                                        theta * kInvPi);
         return make_float3(s.x, s.y, s.z);
     }
-    // Procedural sky: warm white horizon → sky blue zenith
-    return devMix(make_float3(1.f, 1.f, 1.f), make_float3(0.3f, 0.5f, 1.0f),
-                  devClamp01(0.5f * (dir.y + 1.f)));
+    // Procedural sky:
+    return devMix(make_float3(0.25f, 0.3f, 0.6f), make_float3(0.8f, 1.1f, 3.0f),
+                  devClamp01(dir.y));
 }
 
 // ─── Raygen — iterative path loop ────────────────────────────────────────────

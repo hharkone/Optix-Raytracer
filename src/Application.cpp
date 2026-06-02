@@ -782,6 +782,39 @@ void Application::updateCamera()
     m_scene->setCamera(std::move(cam));
 }
 
+// ─── Scene Graph helpers ──────────────────────────────────────────────────────
+
+static void drawNode3D(const Scene& scene, int nodeIdx)
+{
+    const Node3D& node = *scene.nodes()[nodeIdx];
+
+    std::string label = node.name.empty()
+        ? (std::string(node.typeName()) + " " + std::to_string(nodeIdx))
+        : node.name;
+    label += std::string("  <") + node.typeName() + ">";
+
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow
+                             | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (node.children.empty())
+    {
+        flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    }
+
+    ImGui::PushID(nodeIdx);
+    const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+
+    if (open && !node.children.empty())
+    {
+        for (int childIdx : node.children)
+        {
+            drawNode3D(scene, childIdx);
+        }
+        ImGui::TreePop();
+    }
+
+    ImGui::PopID();
+}
+
 // ─── Per-frame ────────────────────────────────────────────────────────────────
 
 bool Application::tick()
@@ -1168,6 +1201,29 @@ bool Application::tick()
     {
         uploadMaterials();
         m_accumDirty = true;
+    }
+
+    ImGui::End();
+
+    // ── Scene Graph panel ─────────────────────────────────────────────────────
+    ImGui::Begin("Scene Graph");
+
+    if (m_scene->rootNodes().empty())
+    {
+        ImGui::TextDisabled("No scene loaded");
+    }
+    else
+    {
+        if (!m_sceneFilePath.empty())
+        {
+            ImGui::TextDisabled("%s",
+                std::filesystem::path(m_sceneFilePath).filename().string().c_str());
+            ImGui::Separator();
+        }
+        for (int rootIdx : m_scene->rootNodes())
+        {
+            drawNode3D(*m_scene, rootIdx);
+        }
     }
 
     ImGui::End();

@@ -1,14 +1,9 @@
 #ifndef OPTIX_RAYTRACER_CAMERA_H
 #define OPTIX_RAYTRACER_CAMERA_H
 
+#include "Math.h"
 #include <cmath>
 #include <string>
-
-// Row-major 4x4 matrix. Element access: m[row][col].
-struct Matrix4x4
-{
-    float m[4][4] = {};
-};
 
 struct Camera
 {

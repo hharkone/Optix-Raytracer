@@ -61,12 +61,40 @@ void Scene::setCamera(Camera camera)
     m_camera = std::move(camera);
 }
 
+int Scene::addNode(std::unique_ptr<Node3D> node)
+{
+    m_nodes.push_back(std::move(node));
+    return static_cast<int>(m_nodes.size()) - 1;
+}
+
+void Scene::addRootNode(int index)
+{
+    m_rootNodes.push_back(index);
+}
+
+Node3D& Scene::nodeAt(int index)
+{
+    return *m_nodes[index];
+}
+
+const std::vector<std::unique_ptr<Node3D>>& Scene::nodes() const
+{
+    return m_nodes;
+}
+
+const std::vector<int>& Scene::rootNodes() const
+{
+    return m_rootNodes;
+}
+
 void Scene::clear()
 {
     m_meshes.clear();
     m_materials.clear();
     m_materialNames.clear();
     m_textures.clear();
+    m_nodes.clear();
+    m_rootNodes.clear();
     m_camera = Camera::makeDefault();
 }
 

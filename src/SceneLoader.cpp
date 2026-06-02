@@ -7,6 +7,7 @@
 #include <tiny_gltf.h>
 
 #include "SceneLoader.h"
+#include "Node3D.h"
 
 #include <filesystem>
 #include <cmath>
@@ -114,11 +115,13 @@ static Matrix4x4 gltfNodeLocalMatrix(const tinygltf::Node& node)
 
 // Recursively searches the node subtree for the first node with a camera.
 // Accumulates the parent-to-world transform as it descends.
+// outGltfNodeIdx is set to the glTF node index where the camera was found.
 static bool findCameraNode(
     const tinygltf::Model& model,
     int                    nodeIdx,
     const Matrix4x4&       parentWorld,
-    Camera&                outCamera)
+    Camera&                outCamera,
+    int&                   outGltfNodeIdx)
 {
     const tinygltf::Node& node = model.nodes[nodeIdx];
     const Matrix4x4 world = mat4Multiply(parentWorld, gltfNodeLocalMatrix(node));
@@ -143,17 +146,69 @@ static bool findCameraNode(
                 outCamera.zFar = static_cast<float>(gc.perspective.zfar);
             }
         }
+        outGltfNodeIdx = nodeIdx;
         return true;
     }
 
     for (int child : node.children)
     {
-        if (findCameraNode(model, child, world, outCamera))
+        if (findCameraNode(model, child, world, outCamera, outGltfNodeIdx))
         {
             return true;
         }
     }
     return false;
+}
+
+// Recursively builds a Node3D for gltfNodeIdx and all its descendants.
+// Returns the index of the newly created node in outScene.
+static int buildNode3D(
+    const tinygltf::Model&  model,
+    int                     gltfNodeIdx,
+    int                     parentSceneIdx,
+    const std::vector<int>& gltfMeshToSceneIdx,
+    int                     cameraGltfNodeIdx,
+    Scene&                  outScene)
+{
+    const tinygltf::Node& gNode = model.nodes[gltfNodeIdx];
+
+    std::unique_ptr<Node3D> node;
+
+    if (gltfNodeIdx == cameraGltfNodeIdx)
+    {
+        node = std::make_unique<CameraNode>();
+    }
+    else if (gNode.mesh >= 0 && gNode.mesh < static_cast<int>(gltfMeshToSceneIdx.size()))
+    {
+        auto meshNode = std::make_unique<MeshNode>();
+        const int first     = gltfMeshToSceneIdx[gNode.mesh];
+        const int primCount = static_cast<int>(model.meshes[gNode.mesh].primitives.size());
+        for (int p = 0; p < primCount; ++p)
+        {
+            meshNode->meshIndices.push_back(first + p);
+        }
+        node = std::move(meshNode);
+    }
+    else
+    {
+        node = std::make_unique<GroupNode>();
+    }
+
+    node->name           = gNode.name;
+    node->localTransform = gltfNodeLocalMatrix(gNode);
+    node->parent         = parentSceneIdx;
+
+    const int sceneIdx = outScene.addNode(std::move(node));
+
+    for (int childGltfIdx : gNode.children)
+    {
+        const int childSceneIdx = buildNode3D(
+            model, childGltfIdx, sceneIdx,
+            gltfMeshToSceneIdx, cameraGltfNodeIdx, outScene);
+        outScene.nodeAt(sceneIdx).children.push_back(childSceneIdx);
+    }
+
+    return sceneIdx;
 }
 
 // ─── float3 host-side math helpers ───────────────────────────────────────────
@@ -463,6 +518,7 @@ bool loadGltfFile(const std::string& path, Scene& outScene, std::string& outErro
 
     const int materialOffset = static_cast<int>(outScene.materials().size());
     const int textureOffset  = static_cast<int>(outScene.textures().size());
+    const int meshOffset     = static_cast<int>(outScene.meshes().size());
 
     for (const tinygltf::Image& img : model.images)
     {
@@ -484,19 +540,42 @@ bool loadGltfFile(const std::string& path, Scene& outScene, std::string& outErro
         loadMesh(gltfMesh, model, materialOffset, outScene);
     }
 
-    // Camera — walk the default scene's node tree; keep Scene's default if none found
+    // Map from glTF mesh index → first Scene mesh index for that mesh.
+    // Primitives within each glTF mesh become consecutive Scene mesh entries.
+    std::vector<int> gltfMeshToSceneIdx(model.meshes.size(), -1);
+    {
+        int idx = meshOffset;
+        for (int mi = 0; mi < static_cast<int>(model.meshes.size()); ++mi)
+        {
+            gltfMeshToSceneIdx[mi] = idx;
+            idx += static_cast<int>(model.meshes[mi].primitives.size());
+        }
+    }
+
     if (!model.scenes.empty())
     {
-        const int sceneIdx = (model.defaultScene >= 0) ? model.defaultScene : 0;
+        const int defaultSceneIdx = (model.defaultScene >= 0) ? model.defaultScene : 0;
+
+        // Find which glTF node carries the camera (for both Camera import and CameraNode tagging).
         Camera importedCamera;
+        int    cameraGltfNodeIdx = -1;
         const Matrix4x4 identity = mat4Identity();
-        for (int rootNode : model.scenes[sceneIdx].nodes)
+        for (int rootNode : model.scenes[defaultSceneIdx].nodes)
         {
-            if (findCameraNode(model, rootNode, identity, importedCamera))
+            if (findCameraNode(model, rootNode, identity, importedCamera, cameraGltfNodeIdx))
             {
                 outScene.setCamera(importedCamera);
                 break;
             }
+        }
+
+        // Build scene graph node tree from the glTF node hierarchy.
+        for (int rootGltfIdx : model.scenes[defaultSceneIdx].nodes)
+        {
+            const int sceneRootIdx = buildNode3D(
+                model, rootGltfIdx, -1,
+                gltfMeshToSceneIdx, cameraGltfNodeIdx, outScene);
+            outScene.addRootNode(sceneRootIdx);
         }
     }
 
