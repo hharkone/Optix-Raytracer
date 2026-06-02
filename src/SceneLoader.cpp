@@ -414,6 +414,18 @@ static MaterialData buildMaterial(
             static_cast<float>(gltfMat.emissiveFactor[2]));
     }
 
+    // KHR_materials_transmission — transmissionFactor ∈ [0, 1]
+    auto transIt = gltfMat.extensions.find("KHR_materials_transmission");
+    if (transIt != gltfMat.extensions.end() && transIt->second.Has("transmissionFactor"))
+        mat.transmission = static_cast<float>(
+            transIt->second.Get("transmissionFactor").GetNumberAsDouble());
+
+    // KHR_materials_ior — index of refraction (default 1.5 per spec)
+    auto iorIt = gltfMat.extensions.find("KHR_materials_ior");
+    if (iorIt != gltfMat.extensions.end() && iorIt->second.Has("ior"))
+        mat.ior = static_cast<float>(
+            iorIt->second.Get("ior").GetNumberAsDouble());
+
     return mat;
 }
 

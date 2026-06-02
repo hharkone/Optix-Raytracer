@@ -1191,6 +1191,14 @@ bool Application::tick()
                 {
                     anyMatChanged = true;
                 }
+                if (ImGui::SliderFloat("Transmission", &mats[i].transmission, 0.f, 1.f, "%.3f"))
+                {
+                    anyMatChanged = true;
+                }
+                if (ImGui::SliderFloat("IOR",          &mats[i].ior,          1.f, 3.f, "%.3f"))
+                {
+                    anyMatChanged = true;
+                }
             }
 
             ImGui::PopID();

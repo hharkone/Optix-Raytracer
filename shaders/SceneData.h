@@ -26,6 +26,9 @@ struct MaterialData
 
     float3 emission      = { 0.f, 0.f, 0.f };
     float  emissionScale = 1.f;
+
+    float  transmission  = 0.f;   // 0 = opaque, 1 = fully transmissive
+    float  ior           = 1.5f;  // index of refraction (glass ≈ 1.5)
 };
 
 #endif // OPTIX_RAYTRACER_SCENE_DATA_H
