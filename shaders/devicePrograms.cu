@@ -373,14 +373,35 @@ extern "C" __global__ void __raygen__renderFrame()
             }
             else
             {
-                // ── 3. Refraction (Snell's law) ───────────────────────────────
-                // Use the original vtx.N (not Nf) to detect entering vs exiting —
-                // vtx.N is the true outward geometry normal, which is what matters
-                // for the physical entering/exiting test.
-                const bool   entering  = (devDot(rayDir, vtx.N) < 0.f);
-                const float3 faceN     = entering ? vtx.N : -vtx.N;
-                const float  eta       = entering ? (1.f / vtx.ior) : vtx.ior;
-                const bool   refracted = devRefract(rayDir, faceN, eta, rayDir);
+                // ── 3. Refraction (rough Snell's law via GGX microfacet) ─────────
+                // vtx.N is the true outward geometry normal — used only for the
+                // entering/exiting test, not for the microfacet direction.
+                const bool   entering = (devDot(rayDir, vtx.N) < 0.f);
+                const float3 faceN    = entering ? vtx.N : -vtx.N;
+                const float  eta      = entering ? (1.f / vtx.ior) : vtx.ior;
+
+                // Sample a GGX microfacet normal (same VNDF as the specular lobe).
+                // At alpha → 0 this converges to the macro normal → smooth glass.
+                // At higher alpha the half-vector is scattered → frosted glass.
+                float3 Tt, Bt;
+                buildONB(Nf, Tt, Bt);
+                const float3 Vt       = -rayDir;
+                const float3 Vt_local = make_float3(
+                    devDot(Vt, Tt), devDot(Vt, Bt), fmaxf(1e-4f, devDot(Vt, Nf)));
+                const float3 Ht_local = devSampleGGX_VNDF(Vt_local, alpha, rnd(seed), rnd(seed));
+                const float3 Ht       = devNormalize(Tt * Ht_local.x + Bt * Ht_local.y + Nf * Ht_local.z);
+
+                // Refract through the microfacet normal; TIR falls back to reflection.
+                const bool refracted = devRefract(rayDir, Ht, eta, rayDir);
+
+                // Smith G1 on the transmitted direction — mirrors the specular weight.
+                if (refracted)
+                {
+                    // cosine against the far-side normal (-faceN)
+                    const float cosT = fmaxf(1e-4f, devDot(rayDir, -faceN));
+                    throughput *= devSmithG1(cosT, alpha);
+                }
+
                 // On TIR devRefract writes the reflected direction; offset stays on
                 // the same side.  On true refraction offset to the far side.
                 rayOrig = vtx.pos + faceN * (refracted ? -1e-3f : 1e-3f);
