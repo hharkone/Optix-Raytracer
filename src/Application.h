@@ -123,6 +123,7 @@ private:
     std::string m_envMapPath;       // display name
     std::string m_envMapError;      // non-empty = last load failed
     float       m_envMapRotation = 0.0f;  // azimuth offset in radians (Shift+RMB drag)
+    float       m_envExposure   = 0.0f;  // EV stops (0 = no change; applied as 2^n)
 
     // Hot-reload state
     std::string                      m_ptxDir;

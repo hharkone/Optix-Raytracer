@@ -1,4 +1,4 @@
-﻿#ifndef OPTIX_RAYTRACER_CAMERA_H
+#ifndef OPTIX_RAYTRACER_CAMERA_H
 #define OPTIX_RAYTRACER_CAMERA_H
 
 #include "Math.h"
@@ -9,7 +9,17 @@ struct Camera
 {
     Matrix4x4   transform;                // camera-to-world (position + orientation in world space)
     Matrix4x4   view;                     // world-to-camera (inverse of transform; OpenGL "view matrix")
-    float       yFov        = 0.872665f;  // vertical field of view, radians (~50 deg)
+
+    // Physical lens / sensor parameters — these drive the FOV and depth of field.
+    // Conventions: sensorSize is the horizontal sensor width in mm; 1 world unit = 1 metre.
+    float focalLength   = 50.0f;   // mm  — drives FOV together with sensorSize
+    float sensorSize    = 35.0f;   // mm  — sensor width (horizontal)
+    float fStop         = 8.0f;    // f-number; lens radius = focalLength / (2 × fStop × 1000) m
+    float focusDistance = 10.0f;   // world units to focal plane along optical axis
+    float bokehEdgeBias = 0.0f;    // [0, 1]: 0 = uniform disk, 1 = pure rim ring
+
+    // Derived / legacy fields — kept for backward compatibility and glTF import.
+    float       yFov        = 0.872665f;  // radians — NOT the primary FOV source; derived from focalLength + sensorSize
     float       aspectRatio = 16.0f / 9.0f;
     float       zNear       = 0.01f;
     float       zFar        = 10000.0f;
@@ -37,6 +47,10 @@ inline Camera Camera::makeDefault()
     cam.view.m[2][2] = 1.0f;
     cam.view.m[2][3] = -3.0f;
     cam.view.m[3][3] = 1.0f;
+
+    // Cache yFov from physical parameters (16:9 default aspect ratio)
+    const float sensorHeight = cam.sensorSize / (16.0f / 9.0f);
+    cam.yFov = 2.0f * atanf(sensorHeight / (2.0f * cam.focalLength));
 
     return cam;
 }

@@ -124,6 +124,15 @@ static bool findCameraNode(
                 outCamera.zFar = static_cast<float>(gc.perspective.zfar);
             }
         }
+        // Convert imported yFov to focalLength so the physical parameters are consistent.
+        // Use sensor_height = sensorSize / aspectRatio with the camera's aspect ratio.
+        {
+            const float ar           = (outCamera.aspectRatio > 0.0f)
+                                       ? outCamera.aspectRatio
+                                       : (16.0f / 9.0f);
+            const float sensorHeight = outCamera.sensorSize / ar;
+            outCamera.focalLength    = sensorHeight / (2.0f * tanf(outCamera.yFov * 0.5f));
+        }
         outGltfNodeIdx = nodeIdx;
         return true;
     }

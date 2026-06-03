@@ -26,6 +26,13 @@ struct LaunchParams
     // back to the procedural sky gradient when this is 0.
     cudaTextureObject_t envMap;
     float               envMapRotation;  // azimuth offset in radians (Shift+RMB drag)
+    float               envExposure;     // exposure in EV stops; applied as 2^n to env radiance
+
+    // Thin-lens depth of field. lensRadius = 0 → pinhole (no DoF).
+    // lensRadius is in world units (1 unit = 1 m); focusDistance is in world units.
+    float lensRadius;     // half aperture = focalLength_mm / (2 × fStop × 1000)
+    float focusDistance;  // distance from eye to focal plane along W
+    float bokehEdgeBias;  // [0, 1]: 0 = uniform disk, 1 = pure rim ring
 
     // Per-pixel HDR accumulation buffer (float4, w unused).  The raygen adds
     // one sample per launch; the display value is accumBuffer[i] / sampleIndex.

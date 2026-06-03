@@ -1012,6 +1012,7 @@ bool Application::tick()
         m_launchParams.traversable    = (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
         m_launchParams.envMap         = m_envMap.gpuTex;
         m_launchParams.envMapRotation = m_envMapRotation;
+        m_launchParams.envExposure    = m_envExposure;
         m_launchParams.accumBuffer    = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
         m_launchParams.sampleIndex    = m_sampleCount;
         m_launchParams.materials      = m_materialsBuffer ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
@@ -1035,11 +1036,12 @@ bool Application::tick()
             const float3 forward =
                 make_float3(-t.m[0][2], -t.m[1][2], -t.m[2][2]);
 
-            const float tanHalfFovV =
-                std::tan(cam.yFov * 0.5f);
-            const float tanHalfFovH =
-                tanHalfFovV * (static_cast<float>(m_viewportWidth)
-                               / static_cast<float>(m_viewportHeight));
+            // FOV from physical lens + sensor parameters
+            const float aspect       = static_cast<float>(m_viewportWidth)
+                                      / static_cast<float>(m_viewportHeight);
+            const float sensorHeight = cam.sensorSize / aspect;  // mm
+            const float tanHalfFovV  = sensorHeight / (2.0f * cam.focalLength);
+            const float tanHalfFovH  = tanHalfFovV * aspect;
 
             m_launchParams.U =
                 make_float3(right.x * tanHalfFovH,
@@ -1050,6 +1052,11 @@ bool Application::tick()
                             up.y * tanHalfFovV,
                             up.z * tanHalfFovV);
             m_launchParams.W = forward;
+
+            // Thin-lens DoF parameters
+            m_launchParams.lensRadius    = (cam.focalLength / (2.0f * cam.fStop)) / 1000.0f;
+            m_launchParams.focusDistance = cam.focusDistance;
+            m_launchParams.bokehEdgeBias = cam.bokehEdgeBias;
         }
 
         // ── GPU launch ────────────────────────────────────────────────────────
@@ -1281,6 +1288,11 @@ bool Application::tick()
         ImGui::TextDisabled("No environment map");
     }
 
+    if (ImGui::SliderFloat("Env Exposure (EV)", &m_envExposure, -10.0f, 10.0f, "%.1f"))
+    {
+        m_accumDirty = true;
+    }
+
     ImGui::Separator();
     ImGui::Text("Meshes: %d  Materials: %d  Textures: %d",
         static_cast<int>(m_scene->meshes().size()),
@@ -1294,7 +1306,14 @@ bool Application::tick()
         cam.transform.m[0][3],
         cam.transform.m[1][3],
         cam.transform.m[2][3]);
-    ImGui::Text("FOV: %.1f deg", cam.yFov * (180.0f / 3.14159265f));
+    {
+        const float aspect      = static_cast<float>(m_viewportWidth)
+                                 / static_cast<float>(m_viewportHeight);
+        const float sH          = cam.sensorSize / aspect;
+        const float derivedFov  = 2.0f * std::atan(sH / (2.0f * cam.focalLength));
+        ImGui::Text("FOV: %.1f deg (%.0f mm / %.0f mm sensor)",
+            derivedFov * (180.0f / 3.14159265f), cam.focalLength, cam.sensorSize);
+    }
 
     ImGui::Separator();
     if (m_accel && m_accel->valid())
@@ -1544,17 +1563,64 @@ bool Application::tick()
         {
             ImGui::Separator();
             {
-                Camera cam    = m_scene->camera();  // mutable copy
-                float  fovDeg = cam.yFov * (180.0f / 3.14159265f);
-                if (ImGui::SliderFloat("FOV (deg)", &fovDeg, 1.0f, 170.0f, "%.1f"))
                 {
-                    cam.yFov = fovDeg * (3.14159265f / 180.0f);
-                    m_scene->setCamera(std::move(cam));
-                    m_accumDirty = true;
+                    Camera cam = m_scene->camera();
+
+                    // Focal length — drives FOV together with sensor size
+                    float fl = cam.focalLength;
+                    if (ImGui::SliderFloat("Focal Length (mm)", &fl, 8.0f, 800.0f, "%.1f mm"))
+                    {
+                        cam.focalLength = fl;
+                        m_scene->setCamera(cam);
+                        m_accumDirty = true;
+                    }
+
+                    // Sensor size (horizontal width)
+                    float ss = cam.sensorSize;
+                    if (ImGui::SliderFloat("Sensor Size (mm)", &ss, 1.0f, 100.0f, "%.1f mm"))
+                    {
+                        cam.sensorSize = ss;
+                        m_scene->setCamera(cam);
+                        m_accumDirty = true;
+                    }
+
+                    // F-stop / aperture
+                    float fs = cam.fStop;
+                    if (ImGui::SliderFloat("F-Stop", &fs, 0.5f, 64.0f, "f/%.1f"))
+                    {
+                        cam.fStop = fs;
+                        m_scene->setCamera(cam);
+                        m_accumDirty = true;
+                    }
+
+                    // Focus distance
+                    float fd = cam.focusDistance;
+                    if (ImGui::DragFloat("Focus Distance", &fd, 0.1f, 0.1f, 10000.0f, "%.2f m"))
+                    {
+                        cam.focusDistance = std::max(0.001f, fd);
+                        m_scene->setCamera(cam);
+                        m_accumDirty = true;
+                    }
+
+                    // Bokeh edge bias
+                    float eb = cam.bokehEdgeBias;
+                    if (ImGui::SliderFloat("Bokeh Edge Bias", &eb, 0.0f, 1.0f, "%.2f"))
+                    {
+                        cam.bokehEdgeBias = eb;
+                        m_scene->setCamera(cam);
+                        m_accumDirty = true;
+                    }
+
+                    // Derived FOV display
+                    const float aspect     = static_cast<float>(m_viewportWidth)
+                                            / static_cast<float>(m_viewportHeight);
+                    const float sH         = cam.sensorSize / aspect;
+                    const float derivedFov = 2.0f * std::atan(sH / (2.0f * cam.focalLength));
+                    ImGui::Text("FOV: %.1f deg  |  Aperture: %.1f mm",
+                        derivedFov * (180.0f / 3.14159265f),
+                        cam.focalLength / cam.fStop);
+                    ImGui::TextDisabled("(transform driven by fly-cam controller)");
                 }
-                ImGui::Text("Aspect:     %.3f",       m_scene->camera().aspectRatio);
-                ImGui::Text("Near / Far: %.4f / %.1f", m_scene->camera().zNear, m_scene->camera().zFar);
-                ImGui::TextDisabled("(transform driven by fly-cam controller)");
             }
         }
     }
