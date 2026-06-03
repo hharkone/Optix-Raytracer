@@ -1,4 +1,4 @@
-// Application.cpp — host-side application: window, CUDA/OptiX init, render loop.
+﻿// Application.cpp — host-side application: window, CUDA/OptiX init, render loop.
 //
 // IMPORTANT: optix_function_table_definition.h must appear in exactly ONE
 // translation unit. This file is that unit — do not include it elsewhere.
@@ -628,7 +628,7 @@ void Application::loadScene(const std::string& path)
         const float fy = -cam.transform.m[1][2];
         const float fz = -cam.transform.m[2][2];
         const float fLen = std::max(1e-6f, sqrtf(fx*fx + fy*fy + fz*fz));
-        m_camPitch = asinf(std::max(-1.f, std::min(1.f, fy / fLen)));
+        m_camPitch = asinf(std::max(-1.0f, std::min(1.0f, fy / fLen)));
         m_camYaw   = atan2f(fx / fLen, -(fz / fLen));
     }
 }
@@ -689,7 +689,7 @@ void Application::updateCamera()
             if (r > 1e-4f)
             {
                 float azimuth   = atan2f(m_camPos.x, m_camPos.z);
-                float elevation = asinf(std::max(-1.f, std::min(1.f, m_camPos.y / r)));
+                float elevation = asinf(std::max(-1.0f, std::min(1.0f, m_camPos.y / r)));
 
                 azimuth   -= dx * m_rotSpeed;
                 elevation += dy * m_rotSpeed;
@@ -733,7 +733,7 @@ void Application::updateCamera()
 
         // forward = direction the camera looks, right = camera's local +X, up = camera's local +Y
         const float3 forward = {  sy*cp,  sp, -cy*cp };
-        const float3 right   = {  cy,    0.f,  sy    };
+        const float3 right   = {  cy,    0.0f,  sy    };
         const float3 up      = { -sy*sp,  cp,  cy*sp };
 
         const bool wKey = glfwGetKey(m_window, GLFW_KEY_W) == GLFW_PRESS;
@@ -776,9 +776,9 @@ void Application::updateCamera()
 
     Camera cam = m_scene->camera();
     cam.transform.m[0][0] =  cy;     cam.transform.m[0][1] = -sy*sp;  cam.transform.m[0][2] = -sy*cp;  cam.transform.m[0][3] = m_camPos.x;
-    cam.transform.m[1][0] = 0.f;     cam.transform.m[1][1] =  cp;     cam.transform.m[1][2] = -sp;     cam.transform.m[1][3] = m_camPos.y;
+    cam.transform.m[1][0] = 0.0f;     cam.transform.m[1][1] =  cp;     cam.transform.m[1][2] = -sp;     cam.transform.m[1][3] = m_camPos.y;
     cam.transform.m[2][0] =  sy;     cam.transform.m[2][1] =  cy*sp;  cam.transform.m[2][2] =  cy*cp;  cam.transform.m[2][3] = m_camPos.z;
-    cam.transform.m[3][0] = 0.f;     cam.transform.m[3][1] = 0.f;     cam.transform.m[3][2] = 0.f;     cam.transform.m[3][3] = 1.f;
+    cam.transform.m[3][0] = 0.0f;     cam.transform.m[3][1] = 0.0f;     cam.transform.m[3][2] = 0.0f;     cam.transform.m[3][3] = 1.0f;
     m_scene->setCamera(std::move(cam));
 }
 
@@ -836,7 +836,7 @@ bool Application::tick()
     // ── Frame timing ──────────────────────────────────────────────────────────
     {
         const auto now = std::chrono::steady_clock::now();
-        if (m_frameTimeMs > 0.f)
+        if (m_frameTimeMs > 0.0f)
         {
             const float deltaMs = std::chrono::duration<float, std::milli>(
                 now - m_frameStart).count();
@@ -874,7 +874,7 @@ bool Application::tick()
                                  ImGuiDockNodeFlags_PassthruCentralNode);
 
     // ── Viewport panel ────────────────────────────────────────────────────────
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::Begin("Viewport", nullptr,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
@@ -983,8 +983,8 @@ bool Application::tick()
             (ImTextureID)(intptr_t)m_displayTexture,
             ImVec2(static_cast<float>(m_viewportWidth),
                    static_cast<float>(m_viewportHeight)),
-            ImVec2(0.f, 1.f),
-            ImVec2(1.f, 0.f));
+            ImVec2(0.0f, 1.0f),
+            ImVec2(1.0f, 0.0f));
     }
 
     ImGui::End();
@@ -999,9 +999,9 @@ bool Application::tick()
         static_cast<unsigned long long>(m_deviceMemoryMB));
     ImGui::Text("Resolution: %d x %d", m_viewportWidth, m_viewportHeight);
 
-    if (m_frameTimeMs > 0.f)
+    if (m_frameTimeMs > 0.0f)
     {
-        const float    fps      = 1000.f / m_frameTimeMs;
+        const float    fps      = 1000.0f / m_frameTimeMs;
         const double   raysPerS = static_cast<double>(m_viewportWidth)
                                 * static_cast<double>(m_viewportHeight) * fps;
 
@@ -1077,7 +1077,7 @@ bool Application::tick()
 
     if (!m_loadError.empty())
     {
-        ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f),
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
                            "Error: %s", m_loadError.c_str());
     }
 
@@ -1088,7 +1088,7 @@ bool Application::tick()
     }
     else if (!m_envMapError.empty())
     {
-        ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f),
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
                            "EXR error: %s", m_envMapError.c_str());
     }
     else
@@ -1109,12 +1109,12 @@ bool Application::tick()
         cam.transform.m[0][3],
         cam.transform.m[1][3],
         cam.transform.m[2][3]);
-    ImGui::Text("FOV: %.1f deg", cam.yFov * (180.f / 3.14159265f));
+    ImGui::Text("FOV: %.1f deg", cam.yFov * (180.0f / 3.14159265f));
 
     ImGui::Separator();
     if (m_accel && m_accel->valid())
     {
-        ImGui::TextColored(ImVec4(0.3f, 1.f, 0.4f, 1.f), "AS: ready");
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 1.0f), "AS: ready");
     }
     else if (!m_scene->empty())
     {
@@ -1136,12 +1136,12 @@ bool Application::tick()
     ImGui::Separator();
     if (m_shaderError.empty())
     {
-        ImGui::TextColored(ImVec4(0.3f, 1.f, 0.4f, 1.f), "Shader: OK");
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 1.0f), "Shader: OK");
         ImGui::TextDisabled("(auto-reloads on PTX change)");
     }
     else
     {
-        ImGui::TextColored(ImVec4(1.f, 0.35f, 0.2f, 1.f), "Shader error — last good pipeline active");
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.2f, 1.0f), "Shader error — last good pipeline active");
         ImGui::TextWrapped("%s", m_shaderError.c_str());
     }
 
@@ -1174,11 +1174,11 @@ bool Application::tick()
                 {
                     anyMatChanged = true;
                 }
-                if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.f, 1.f))
+                if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.0f, 1.0f))
                 {
                     anyMatChanged = true;
                 }
-                if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.f, 1.f))
+                if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.0f, 1.0f))
                 {
                     anyMatChanged = true;
                 }
@@ -1187,15 +1187,15 @@ bool Application::tick()
                     anyMatChanged = true;
                 }
                 if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale,
-                                     0.1f, 0.f, 1000.f, "%.2f"))
+                                     0.1f, 0.0f, 1000.0f, "%.2f"))
                 {
                     anyMatChanged = true;
                 }
-                if (ImGui::SliderFloat("Transmission", &mats[i].transmission, 0.f, 1.f, "%.3f"))
+                if (ImGui::SliderFloat("Transmission", &mats[i].transmission, 0.0f, 1.0f, "%.3f"))
                 {
                     anyMatChanged = true;
                 }
-                if (ImGui::SliderFloat("IOR",          &mats[i].ior,          1.f, 3.f, "%.3f"))
+                if (ImGui::SliderFloat("IOR",          &mats[i].ior,          1.0f, 3.0f, "%.3f"))
                 {
                     anyMatChanged = true;
                 }
@@ -1241,7 +1241,7 @@ bool Application::tick()
     int w, h;
     glfwGetFramebufferSize(m_window, &w, &h);
     glViewport(0, 0, w, h);
-    glClearColor(0.10f, 0.10f, 0.15f, 1.f);
+    glClearColor(0.10f, 0.10f, 0.15f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

@@ -1,4 +1,4 @@
-// TINYGLTF_IMPLEMENTATION in exactly one TU — same pattern as optix_function_table_definition.h
+﻿// TINYGLTF_IMPLEMENTATION in exactly one TU — same pattern as optix_function_table_definition.h
 // in Application.cpp. STB_IMAGE_WRITE_IMPLEMENTATION is required even though we only load;
 // tinygltf's implementation block unconditionally includes both stb headers.
 #define TINYGLTF_IMPLEMENTATION
@@ -18,7 +18,7 @@
 static Matrix4x4 mat4Identity()
 {
     Matrix4x4 m;
-    m.m[0][0] = m.m[1][1] = m.m[2][2] = m.m[3][3] = 1.f;
+    m.m[0][0] = m.m[1][1] = m.m[2][2] = m.m[3][3] = 1.0f;
     return m;
 }
 
@@ -54,7 +54,7 @@ static Matrix4x4 mat4RigidInverse(const Matrix4x4& m)
     inv.m[0][3] = -(inv.m[0][0]*tx + inv.m[0][1]*ty + inv.m[0][2]*tz);
     inv.m[1][3] = -(inv.m[1][0]*tx + inv.m[1][1]*ty + inv.m[1][2]*tz);
     inv.m[2][3] = -(inv.m[2][0]*tx + inv.m[2][1]*ty + inv.m[2][2]*tz);
-    inv.m[3][3] = 1.f;
+    inv.m[3][3] = 1.0f;
     return inv;
 }
 
@@ -75,7 +75,7 @@ static Matrix4x4 gltfNodeLocalMatrix(const tinygltf::Node& node)
         return m;
     }
 
-    float sx = 1.f, sy = 1.f, sz = 1.f;
+    float sx = 1.0f, sy = 1.0f, sz = 1.0f;
     if (node.scale.size() == 3)
     {
         sx = static_cast<float>(node.scale[0]);
@@ -83,7 +83,7 @@ static Matrix4x4 gltfNodeLocalMatrix(const tinygltf::Node& node)
         sz = static_cast<float>(node.scale[2]);
     }
 
-    float qx = 0.f, qy = 0.f, qz = 0.f, qw = 1.f;
+    float qx = 0.0f, qy = 0.0f, qz = 0.0f, qw = 1.0f;
     if (node.rotation.size() == 4)
     {
         qx = static_cast<float>(node.rotation[0]);
@@ -94,15 +94,15 @@ static Matrix4x4 gltfNodeLocalMatrix(const tinygltf::Node& node)
 
     Matrix4x4 m = mat4Identity();
     // Rotation from unit quaternion, columns scaled by S
-    m.m[0][0] = (1.f - 2.f*(qy*qy + qz*qz)) * sx;
-    m.m[0][1] = (2.f*(qx*qy - qz*qw))        * sy;
-    m.m[0][2] = (2.f*(qx*qz + qy*qw))        * sz;
-    m.m[1][0] = (2.f*(qx*qy + qz*qw))        * sx;
-    m.m[1][1] = (1.f - 2.f*(qx*qx + qz*qz)) * sy;
-    m.m[1][2] = (2.f*(qy*qz - qx*qw))        * sz;
-    m.m[2][0] = (2.f*(qx*qz - qy*qw))        * sx;
-    m.m[2][1] = (2.f*(qy*qz + qx*qw))        * sy;
-    m.m[2][2] = (1.f - 2.f*(qx*qx + qy*qy)) * sz;
+    m.m[0][0] = (1.0f - 2.0f*(qy*qy + qz*qz)) * sx;
+    m.m[0][1] = (2.0f*(qx*qy - qz*qw))        * sy;
+    m.m[0][2] = (2.0f*(qx*qz + qy*qw))        * sz;
+    m.m[1][0] = (2.0f*(qx*qy + qz*qw))        * sx;
+    m.m[1][1] = (1.0f - 2.0f*(qx*qx + qz*qz)) * sy;
+    m.m[1][2] = (2.0f*(qy*qz - qx*qw))        * sz;
+    m.m[2][0] = (2.0f*(qx*qz - qy*qw))        * sx;
+    m.m[2][1] = (2.0f*(qy*qz + qx*qw))        * sy;
+    m.m[2][2] = (1.0f - 2.0f*(qx*qx + qy*qy)) * sz;
 
     if (node.translation.size() == 3)
     {
@@ -234,7 +234,7 @@ static float3 f3Normalize(float3 v)
     const float len = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
     if (len < 1e-8f)
     {
-        return make_float3(0.f, 1.f, 0.f);  // degenerate triangle → arbitrary up
+        return make_float3(0.0f, 1.0f, 0.0f);  // degenerate triangle → arbitrary up
     }
     return make_float3(v.x / len, v.y / len, v.z / len);
 }
@@ -333,7 +333,7 @@ static void readIndexAccessor(
 
 static void generateFlatNormals(Mesh& mesh)
 {
-    mesh.normals.resize(mesh.positions.size(), make_float3(0.f, 0.f, 0.f));
+    mesh.normals.resize(mesh.positions.size(), make_float3(0.0f, 0.0f, 0.0f));
     for (const uint3& tri : mesh.indices)
     {
         const float3 e0 = f3Sub(mesh.positions[tri.y], mesh.positions[tri.x]);
@@ -495,7 +495,7 @@ static void loadMesh(
 
         if (mesh.uvs.empty())
         {
-            mesh.uvs.resize(mesh.positions.size(), make_float2(0.f, 0.f));
+            mesh.uvs.resize(mesh.positions.size(), make_float2(0.0f, 0.0f));
         }
 
         mesh.materialIndex = (prim.material >= 0)

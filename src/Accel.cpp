@@ -1,4 +1,4 @@
-// Accel.cpp — OptiX acceleration structure builder.
+﻿// Accel.cpp — OptiX acceleration structure builder.
 //
 // Builds one BLAS per mesh (with compaction) and one TLAS instancing all
 // BLASes with identity transforms. The compacted BLAS output buffers and TLAS
@@ -217,9 +217,9 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
         std::memset(&inst, 0, sizeof(inst));
 
         // Row-major 3×4 identity transform (last row [0,0,0,1] is implicit)
-        inst.transform[0]  = 1.f;
-        inst.transform[5]  = 1.f;
-        inst.transform[10] = 1.f;
+        inst.transform[0]  = 1.0f;
+        inst.transform[5]  = 1.0f;
+        inst.transform[10] = 1.0f;
 
         inst.instanceId        = static_cast<unsigned int>(i);
         inst.sbtOffset         = static_cast<unsigned int>(i);  // one hit record per mesh

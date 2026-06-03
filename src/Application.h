@@ -1,4 +1,4 @@
-#ifndef OPTIX_RAYTRACER_APPLICATION_H
+﻿#ifndef OPTIX_RAYTRACER_APPLICATION_H
 #define OPTIX_RAYTRACER_APPLICATION_H
 
 #include <optix.h>
@@ -118,13 +118,13 @@ private:
 
     // Frame timing — updated at the top of each tick()
     std::chrono::steady_clock::time_point m_frameStart;
-    float m_frameTimeMs = 0.f;  // exponential moving average of per-frame duration
+    float m_frameTimeMs = 0.0f;  // exponential moving average of per-frame duration
 
     // Free-fly camera state — the scene camera matrix is rebuilt from these each frame
-    float3 m_camPos    = { 0.f, 0.f, 3.f };
-    float  m_camYaw    = 0.f;     // radians, rotation around world Y; 0 = facing -Z
-    float  m_camPitch  = 0.f;     // radians, tilt around camera X; positive = look up
-    float  m_moveSpeed = 5.f;     // world units / second (WASD)
+    float3 m_camPos    = { 0.0f, 0.0f, 3.0f };
+    float  m_camYaw    = 0.0f;     // radians, rotation around world Y; 0 = facing -Z
+    float  m_camPitch  = 0.0f;     // radians, tilt around camera X; positive = look up
+    float  m_moveSpeed = 5.0f;     // world units / second (WASD)
     float  m_rotSpeed  = 0.003f;  // radians / pixel (RMB drag)
 
     // Raw input state carried across frames

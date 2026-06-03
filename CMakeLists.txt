@@ -2,11 +2,19 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 
 # ── Policy guards ────────────────────────────────────────────────────────────
 if(POLICY CMP0135)
-  cmake_policy(SET CMP0135 NEW) # FetchContent timestamp behaviour
+    cmake_policy(SET CMP0135 NEW) # FetchContent timestamp behaviour
 endif()
 if(POLICY CMP0074)
-  cmake_policy(SET CMP0074 NEW) # find_package honours <Pkg>_ROOT variables
+    cmake_policy(SET CMP0074 NEW) # find_package honours <Pkg>_ROOT variables
 endif()
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD) # Allow FetchContent_Populate (deprecated in CMake 4.x)
+endif()
+
+# Third-party dependencies declare cmake_minimum_required versions < 3.10, which
+# triggers a CMake 4.x deprecation warning that we cannot fix in their source.
+# Suppress it globally — our own CMake code does not use deprecated features.
+set(CMAKE_WARN_DEPRECATED OFF CACHE INTERNAL "")
 
 # ── CUDA architectures (must be set before project()) ────────────────────────
 # sm_75 = Turing (RTX 20xx)  sm_86 = Ampere (RTX 30xx)  sm_89 = Ada (RTX 40xx)

@@ -1,4 +1,4 @@
-// devicePrograms.cu — OptiX Monte Carlo path tracer.
+﻿// devicePrograms.cu — OptiX Monte Carlo path tracer.
 //
 // Architecture:
 //   • The raygen shader drives the entire bounce loop iteratively via a for-loop.
@@ -23,7 +23,7 @@ static constexpr int MAX_BOUNCES = 16;
 
 // ─── Scalar / float3 utilities ───────────────────────────────────────────────
 
-static __forceinline__ __device__ float devClamp01(float x) { return x < 0.f ? 0.f : (x > 1.f ? 1.f : x); }
+static __forceinline__ __device__ float devClamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 static __forceinline__ __device__ float devDot(float3 a, float3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 static __forceinline__ __device__ float devLuminance(float3 c) { return 0.2126f*c.x + 0.7152f*c.y + 0.0722f*c.z; }
 
@@ -86,7 +86,7 @@ uint32_t pcgNext(uint32_t& state)
 }
 
 static __forceinline__ __device__
-float rnd(uint32_t& seed) { return (float)pcgNext(seed) * (1.f / 4294967296.f); }
+float rnd(uint32_t& seed) { return (float)pcgNext(seed) * (1.0f / 4294967296.0f); }
 
 // ─── Sampling helpers ─────────────────────────────────────────────────────────
 
@@ -95,19 +95,19 @@ float rnd(uint32_t& seed) { return (float)pcgNext(seed) * (1.f / 4294967296.f); 
 static __forceinline__ __device__
 float3 cosineSampleHemisphere(float r1, float r2)
 {
-    const float phi     = 2.f * 3.14159265358979f * r1;
+    const float phi     = 2.0f * 3.14159265358979f * r1;
     const float sqrtR2  = sqrtf(r2);
-    return make_float3(cosf(phi)*sqrtR2, sinf(phi)*sqrtR2, sqrtf(1.f - r2));
+    return make_float3(cosf(phi)*sqrtR2, sinf(phi)*sqrtR2, sqrtf(1.0f - r2));
 }
 
 // Orthonormal tangent frame around N (Duff et al. 2017).
 static __forceinline__ __device__
 void buildONB(float3 N, float3& T, float3& B)
 {
-    const float s = copysignf(1.f, N.z);
-    const float a = -1.f / (s + N.z);
+    const float s = copysignf(1.0f, N.z);
+    const float a = -1.0f / (s + N.z);
     const float b =  N.x * N.y * a;
-    T = make_float3(1.f + s*N.x*N.x*a, s*b, -s*N.x);
+    T = make_float3(1.0f + s*N.x*N.x*a, s*b, -s*N.x);
     B = make_float3(b, s + N.y*N.y*a, -N.y);
 }
 
@@ -117,9 +117,9 @@ void buildONB(float3 N, float3& T, float3& B)
 static __forceinline__ __device__
 float3 devFresnel(float cosTheta, float3 F0)
 {
-    const float t  = 1.f - devClamp01(cosTheta);
+    const float t  = 1.0f - devClamp01(cosTheta);
     const float t5 = t * t * t * t * t;
-    return F0 + (make_float3(1.f, 1.f, 1.f) - F0) * t5;
+    return F0 + (make_float3(1.0f, 1.0f, 1.0f) - F0) * t5;
 }
 
 // Sample GGX visible normals (Heitz 2018).
@@ -140,8 +140,8 @@ float3 devSampleGGX_VNDF(float3 V_local, float alpha, float u1, float u2)
     // Orthonormal basis around Vh (T1 ⊥ Vh in the XY plane)
     const float  len2 = Vh.x*Vh.x + Vh.y*Vh.y;
     const float3 T1   = (len2 > 1e-7f)
-        ? make_float3(-Vh.y, Vh.x, 0.f) * rsqrtf(len2)
-        : make_float3(1.f, 0.f, 0.f);
+        ? make_float3(-Vh.y, Vh.x, 0.0f) * rsqrtf(len2)
+        : make_float3(1.0f, 0.0f, 0.0f);
     // T2 = cross(Vh, T1)
     const float3 T2 = make_float3(Vh.y*T1.z - Vh.z*T1.y,
                                    Vh.z*T1.x - Vh.x*T1.z,
@@ -149,16 +149,16 @@ float3 devSampleGGX_VNDF(float3 V_local, float alpha, float u1, float u2)
 
     // Sample a point on the projected area disk
     const float r   = sqrtf(u1);
-    const float phi = 2.f * 3.14159265358979f * u2;
+    const float phi = 2.0f * 3.14159265358979f * u2;
     float t1 = r * cosf(phi);
     float t2 = r * sinf(phi);
     // Blend between uniform disk (s=0) and projected hemisphere (s=1)
-    const float s = 0.5f * (1.f + Vh.z);
-    t2 = (1.f - s) * sqrtf(fmaxf(0.f, 1.f - t1*t1)) + s * t2;
+    const float s = 0.5f * (1.0f + Vh.z);
+    t2 = (1.0f - s) * sqrtf(fmaxf(0.0f, 1.0f - t1*t1)) + s * t2;
 
     // Lift onto hemisphere, stretch back to GGX ellipsoid
     const float3 Nh = T1 * t1 + T2 * t2
-                    + Vh * sqrtf(fmaxf(0.f, 1.f - t1*t1 - t2*t2));
+                    + Vh * sqrtf(fmaxf(0.0f, 1.0f - t1*t1 - t2*t2));
     return devNormalize(
         make_float3(alpha * Nh.x, alpha * Nh.y, fmaxf(1e-6f, Nh.z)));
 }
@@ -169,14 +169,14 @@ float devSmithG1(float cosTheta, float alpha)
 {
     const float a2 = alpha * alpha;
     const float c2 = cosTheta * cosTheta;
-    return 2.f * cosTheta / (cosTheta + sqrtf(a2 + (1.f - a2) * c2));
+    return 2.0f * cosTheta / (cosTheta + sqrtf(a2 + (1.0f - a2) * c2));
 }
 
 // Reflect incident direction v around normal n.
 static __forceinline__ __device__
 float3 devReflect(float3 v, float3 n)
 {
-    return v - n * (2.f * devDot(v, n));
+    return v - n * (2.0f * devDot(v, n));
 }
 
 // Refract incident direction v through a surface with normal n (opposing v) and
@@ -187,13 +187,13 @@ static __forceinline__ __device__
 bool devRefract(float3 v, float3 n, float eta, float3& out)
 {
     const float cosI  = devDot(-v, n);                        // positive: n opposes v
-    const float sinT2 = eta * eta * fmaxf(0.f, 1.f - cosI * cosI);
-    if (sinT2 >= 1.f)                                         // total internal reflection
+    const float sinT2 = eta * eta * fmaxf(0.0f, 1.0f - cosI * cosI);
+    if (sinT2 >= 1.0f)                                         // total internal reflection
     {
         out = devReflect(v, n);
         return false;
     }
-    const float cosT = sqrtf(1.f - sinT2);
+    const float cosT = sqrtf(1.0f - sinT2);
     out = devNormalize(v * eta + n * (eta * cosI - cosT));    // Snell's law, vector form
     return true;
 }
@@ -207,7 +207,7 @@ float3 sampleBackground(float3 dir)
     {
         const float kInvPi  = 0.31830988618f;
         const float kInv2Pi = 0.15915494309f;
-        const float theta   = acosf(fmaxf(-1.f, fminf(1.f, dir.y)));
+        const float theta   = acosf(fmaxf(-1.0f, fminf(1.0f, dir.y)));
         const float phi     = atan2f(dir.x, -dir.z);
         const float4 s = tex2D<float4>(optixLaunchParams.envMap,
                                        phi * kInv2Pi + 0.5f,
@@ -232,20 +232,20 @@ extern "C" __global__ void __raygen__renderFrame()
     {
         if (optixLaunchParams.envMap != 0)
         {
-            const float nx  = ((float)idx.x + 0.5f) / (float)dim.x * 2.f - 1.f;
-            const float ny  = ((float)idx.y + 0.5f) / (float)dim.y * 2.f - 1.f;
+            const float nx  = ((float)idx.x + 0.5f) / (float)dim.x * 2.0f - 1.0f;
+            const float ny  = ((float)idx.y + 0.5f) / (float)dim.y * 2.0f - 1.0f;
             const float3 dir = devNormalize(
                 optixLaunchParams.U * nx +
                 optixLaunchParams.V * ny +
                 optixLaunchParams.W);
             float3 c = sampleBackground(dir);
-            c.x = powf(devClamp01(c.x / (c.x + 1.f)), 1.f / 2.2f);
-            c.y = powf(devClamp01(c.y / (c.y + 1.f)), 1.f / 2.2f);
-            c.z = powf(devClamp01(c.z / (c.z + 1.f)), 1.f / 2.2f);
+            c.x = powf(devClamp01(c.x / (c.x + 1.0f)), 1.0f / 2.2f);
+            c.y = powf(devClamp01(c.y / (c.y + 1.0f)), 1.0f / 2.2f);
+            c.z = powf(devClamp01(c.z / (c.z + 1.0f)), 1.0f / 2.2f);
             optixLaunchParams.colorBuffer[fbIdx] = make_uchar4(
-                (unsigned char)(c.x * 255.f),
-                (unsigned char)(c.y * 255.f),
-                (unsigned char)(c.z * 255.f), 255u);
+                (unsigned char)(c.x * 255.0f),
+                (unsigned char)(c.y * 255.0f),
+                (unsigned char)(c.z * 255.0f), 255u);
         }
         else
         {
@@ -264,8 +264,8 @@ extern "C" __global__ void __raygen__renderFrame()
     pcgNext(seed);  // warm up
 
     // Sub-pixel jitter for anti-aliasing
-    const float nx = ((float)idx.x + rnd(seed)) / (float)dim.x * 2.f - 1.f;
-    const float ny = ((float)idx.y + rnd(seed)) / (float)dim.y * 2.f - 1.f;
+    const float nx = ((float)idx.x + rnd(seed)) / (float)dim.x * 2.0f - 1.0f;
+    const float ny = ((float)idx.y + rnd(seed)) / (float)dim.y * 2.0f - 1.0f;
 
     float3 rayOrig = optixLaunchParams.eye;
     float3 rayDir  = devNormalize(
@@ -273,8 +273,8 @@ extern "C" __global__ void __raygen__renderFrame()
         optixLaunchParams.V * ny +
         optixLaunchParams.W);
 
-    float3 throughput = make_float3(1.f, 1.f, 1.f);
-    float3 radiance   = make_float3(0.f, 0.f, 0.f);
+    float3 throughput = make_float3(1.0f, 1.0f, 1.0f);
+    float3 radiance   = make_float3(0.0f, 0.0f, 0.0f);
 
     // Beer-Lambert absorption: -log(albedo) per unit distance.
     // Set when entering a transmissive medium, cleared on exit, unchanged on TIR.
@@ -291,7 +291,7 @@ extern "C" __global__ void __raygen__renderFrame()
         optixTrace(
             optixLaunchParams.traversable,
             rayOrig, rayDir,
-            1e-3f, 1e30f, 0.f,
+            1e-3f, 1e30f, 0.0f,
             OptixVisibilityMask(0xFF),
             OPTIX_RAY_FLAG_NONE,
             0, 1, 0,
@@ -330,17 +330,17 @@ extern "C" __global__ void __raygen__renderFrame()
         // ray is inside a transmissive object.  Using vtx.N directly for cosV
         // would yield a negative dot product → clamp to 0 → Fresnel = 1 → p_spec = 1
         // → kNS = (1-1)·albedo / 0 = 0, killing every interior bounce.
-        const float3 Nf = (devDot(vtx.N, -rayDir) >= 0.f) ? vtx.N : -vtx.N;
+        const float3 Nf = (devDot(vtx.N, -rayDir) >= 0.0f) ? vtx.N : -vtx.N;
 
         // Fresnel — evaluated once, shared by all lobes
-        const float  r0_d  = (1.f - vtx.ior) / (1.f + vtx.ior);
+        const float  r0_d  = (1.0f - vtx.ior) / (1.0f + vtx.ior);
         const float3 F0    = devMix(make_float3(r0_d*r0_d, r0_d*r0_d, r0_d*r0_d),
                                     vtx.albedo, vtx.metallic);
         const float  cosV  = devDot(Nf, -rayDir);  // always positive by construction
         const float3 F     = devFresnel(cosV, F0);
 
         // Specular probability — metals always specular
-        const float p_spec = devClamp01((1.f - vtx.metallic) * devLuminance(F) + vtx.metallic);
+        const float p_spec = devClamp01((1.0f - vtx.metallic) * devLuminance(F) + vtx.metallic);
 
         if (rnd(seed) < p_spec)
         {
@@ -356,7 +356,7 @@ extern "C" __global__ void __raygen__renderFrame()
             const float3 H       = devNormalize(T * H_local.x + B * H_local.y + Nf * H_local.z);
             const float3 L       = devReflect(rayDir, H);
 
-            if (devDot(L, Nf) <= 0.f) break;
+            if (devDot(L, Nf) <= 0.0f) break;
 
             // Weight = F * G1(L) / p_spec  (G1(V) cancels with the VNDF PDF)
             const float cosNL = fmaxf(1e-4f, devDot(Nf, L));
@@ -367,8 +367,8 @@ extern "C" __global__ void __raygen__renderFrame()
         else
         {
             // Non-specular weight — identical for both sub-lobes
-            const float3 kNS = (make_float3(1.f, 1.f, 1.f) - F) * vtx.albedo
-                               * (1.f / fmaxf(1e-4f, 1.f - p_spec));
+            const float3 kNS = (make_float3(1.0f, 1.0f, 1.0f) - F) * vtx.albedo
+                               * (1.0f / fmaxf(1e-4f, 1.0f - p_spec));
             throughput *= kNS;
 
             const float p_trans = devClamp01(vtx.transmission);
@@ -387,9 +387,9 @@ extern "C" __global__ void __raygen__renderFrame()
                 // ── 3. Refraction (rough Snell's law via GGX microfacet) ─────────
                 // vtx.N is the true outward geometry normal — used only for the
                 // entering/exiting test, not for the microfacet direction.
-                const bool   entering = (devDot(rayDir, vtx.N) < 0.f);
+                const bool   entering = (devDot(rayDir, vtx.N) < 0.0f);
                 const float3 faceN    = entering ? vtx.N : -vtx.N;
-                const float  eta      = entering ? (1.f / vtx.ior) : vtx.ior;
+                const float  eta      = entering ? (1.0f / vtx.ior) : vtx.ior;
 
                 // Sample a GGX microfacet normal (same VNDF as the specular lobe).
                 // At alpha → 0 this converges to the macro normal → smooth glass.
@@ -426,7 +426,7 @@ extern "C" __global__ void __raygen__renderFrame()
                     }
                     else
                     {
-                        absorb = make_float3(0.f, 0.f, 0.f);
+                        absorb = make_float3(0.0f, 0.0f, 0.0f);
                     }
                 }
 
@@ -441,7 +441,7 @@ extern "C" __global__ void __raygen__renderFrame()
         {
             const float maxThr = fmaxf(throughput.x, fmaxf(throughput.y, throughput.z));
             if (rnd(seed) > maxThr) break;
-            throughput *= 1.f / fmaxf(maxThr, 1e-6f);
+            throughput *= 1.0f / fmaxf(maxThr, 1e-6f);
         }
     }
 
@@ -452,23 +452,23 @@ extern "C" __global__ void __raygen__renderFrame()
     acc.z += radiance.z;
 
     // ── Tone-map and gamma-encode ─────────────────────────────────────────────
-    const float  inv = 1.f / (float)(optixLaunchParams.sampleIndex + 1);
+    const float  inv = 1.0f / (float)(optixLaunchParams.sampleIndex + 1);
     float3 avg = make_float3(acc.x * inv, acc.y * inv, acc.z * inv);
 
     // Reinhard: [0, ∞) → [0, 1)
-    avg.x = avg.x / (avg.x + 1.f);
-    avg.y = avg.y / (avg.y + 1.f);
-    avg.z = avg.z / (avg.z + 1.f);
+    avg.x = avg.x / (avg.x + 1.0f);
+    avg.y = avg.y / (avg.y + 1.0f);
+    avg.z = avg.z / (avg.z + 1.0f);
 
     // Linear → sRGB (γ ≈ 1/2.2)
-    avg.x = powf(devClamp01(avg.x), 1.f / 2.2f);
-    avg.y = powf(devClamp01(avg.y), 1.f / 2.2f);
-    avg.z = powf(devClamp01(avg.z), 1.f / 2.2f);
+    avg.x = powf(devClamp01(avg.x), 1.0f / 2.2f);
+    avg.y = powf(devClamp01(avg.y), 1.0f / 2.2f);
+    avg.z = powf(devClamp01(avg.z), 1.0f / 2.2f);
 
     optixLaunchParams.colorBuffer[fbIdx] = make_uchar4(
-        (unsigned char)(avg.x * 255.f),
-        (unsigned char)(avg.y * 255.f),
-        (unsigned char)(avg.z * 255.f),
+        (unsigned char)(avg.x * 255.0f),
+        (unsigned char)(avg.y * 255.0f),
+        (unsigned char)(avg.z * 255.0f),
         255u);
 }
 
@@ -490,7 +490,7 @@ extern "C" __global__ void __closesthit__radiance()
     // ── Interpolated shading normal ───────────────────────────────────────────
     const uint3  tri = mesh.indices[optixGetPrimitiveIndex()];
     const float2 bc  = optixGetTriangleBarycentrics();
-    const float  w0  = 1.f - bc.x - bc.y;
+    const float  w0  = 1.0f - bc.x - bc.y;
 
     const float3 n_obj = devNormalize(
         mesh.normals[tri.x] * w0  +
@@ -519,9 +519,9 @@ extern "C" __global__ void __closesthit__radiance()
     {
         vtx->albedo        = make_float3(0.8f, 0.8f, 0.8f);
         vtx->roughness     = 0.5f;
-        vtx->metallic      = 0.f;
-        vtx->emission      = make_float3(0.f, 0.f, 0.f);
-        vtx->transmission  = 0.f;
+        vtx->metallic      = 0.0f;
+        vtx->emission      = make_float3(0.0f, 0.0f, 0.0f);
+        vtx->transmission  = 0.0f;
         vtx->ior           = 1.5f;
     }
 
