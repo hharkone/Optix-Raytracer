@@ -2,20 +2,25 @@
 
 A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, C++17, and Dear ImGui.
 
+![App screenshot](app.PNG)
+
+---
+
 ## Features
 
 ### Rendering
 - **Monte Carlo path tracing** with up to 16 bounces and per-pixel progressive accumulation
-- **PBR materials** (GGX-VNDF microfacet BRDF) — albedo, roughness, metallic, emission, transmission, IOR, absorption distance
-- **Probabilistic path selection** — diffuse/specular split driven by Fresnel probability for energy conservation
-- **Thin-lens depth of field** — focal length, sensor size, f-stop, focus distance, and adjustable bokeh edge bias
-- **Beer-Lambert volumetric absorption** — coloured glass with physically accurate thickness falloff
+- **PBR materials** (GGX-VNDF microfacet BRDF) — albedo, roughness, metallic, clearcoat, clearcoat roughness, emission, transmission, IOR, and absorption distance
+- **Probabilistic lobe selection** — clearcoat → specular → diffuse/refraction, each weighted by Fresnel probability for energy conservation
+- **Stochastic refraction** — rough dielectric transmission with Snell's law and GGX microfacet normal sampling; Beer-Lambert volumetric absorption for coloured glass
 - **Environment lighting** — equirectangular EXR maps or procedural sky gradient, with rotation and exposure (EV) controls
+- **HDRI importance sampling** — 2D luminance CDF built at load time; Next Event Estimation (NEE) fires shadow rays toward bright env-map regions at every diffuse bounce; Multiple Importance Sampling (MIS) power heuristic prevents double-counting with the regular BSDF path
+- **Thin-lens depth of field** — focal length, sensor size, f-stop, focus distance, and adjustable bokeh edge bias
 - **Reinhard tone mapping** with sRGB gamma encoding
 - **OptiX AI denoiser** — normal + albedo guide layers, configurable denoise interval, keeps the last denoised frame while accumulating
 
 ### Scene
-- **glTF 2.0 / GLB loading** — meshes, PBR materials, base-colour textures, cameras, scene hierarchy
+- **glTF 2.0 / GLB loading** — meshes, PBR materials (including `KHR_materials_transmission`, `KHR_materials_ior`, `KHR_materials_clearcoat`), base-colour textures, cameras, scene hierarchy
 - **Scene graph** — full glTF node hierarchy preserved as a `Node3D` tree (`MeshNode`, `CameraNode`, `GroupNode`)
 - **Node transforms applied to TLAS** — mesh instances positioned using accumulated world-space transforms from the node hierarchy
 - **Live transform editing** — drag node transform values in the Node Properties panel; TLAS-only rebuild keeps BLASes intact
@@ -30,12 +35,12 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, C++17, and D
 |---|---|
 | **Viewport** | Live rendered image, resizes dynamically |
 | **Raytracer** | GPU stats, sample count, denoiser toggle, environment controls |
-| **Materials** | Per-material editor with all PBR parameters |
+| **Materials** | Per-material editor with all PBR parameters including clearcoat, transmission, and IOR |
 | **Scene Graph** | Hierarchy tree of all scene nodes (click to select) |
 | **Node Properties** | Transform matrix, material editor, camera parameters for the selected node |
 
 ### Performance
-- **PTX hot-reload** — edit `devicePrograms.cu`, rebuild the PTX, and the shader reloads without restarting
+- **PTX hot-reload** — edit `devicePrograms.cu`, rebuild the PTX, and the shader reloads without restarting; accumulation resets automatically
 - **BLAS compaction** — per-mesh bottom-level AS built with size compaction
 - **Frame-time EMA** — smoothed frame time and Mrays/s display
 
@@ -126,6 +131,7 @@ cmake --build build --config Release --parallel
 Optix-Raytracer/
 ├── CMakeLists.txt              Root build: project settings, FetchContent, subdirs
 ├── build.bat / configure.bat   Convenience build scripts
+├── app.PNG                     Application screenshot
 ├── cmake/
 │   ├── FindOptiX.cmake         Locates the OptiX SDK; creates the OptiX::OptiX target
 │   └── cuda_intellisense.props.in  VS property sheet: adds OptiX to IntelliSense
@@ -135,7 +141,8 @@ Optix-Raytracer/
 │   ├── device_math.h           float3 operator overloads (+ − * / for device and host)
 │   ├── LaunchParams.h          GPU parameter struct shared between host and device
 │   ├── SceneData.h             MeshData and MaterialData (no STL; host + device)
-│   └── devicePrograms.cu       OptiX device programs (path tracer, denoiser guides)
+│   └── devicePrograms.cu       OptiX device programs — iterative path tracer,
+│                               HDRI importance sampling, NEE shadow rays, MIS
 └── src/
     ├── main.cpp                Entry point
     ├── Application.h/.cpp      Window, CUDA/OptiX init, ImGui UI, per-frame render loop
@@ -144,7 +151,8 @@ Optix-Raytracer/
     ├── Node3D.h                Node3D base + MeshNode, CameraNode, GroupNode
     ├── Scene.h/.cpp            Scene container: meshes, materials, textures, node tree
     ├── Mesh.h                  Host-side mesh: separate vertex attribute arrays
-    ├── Texture.h/.cpp          Host+GPU texture: RGBA8 / RGBA32F, EXR loading, GPU upload
+    ├── Texture.h/.cpp          Host+GPU texture: RGBA8 / RGBA32F, EXR loading,
+    │                           GPU upload, HDRI importance-sampling CDF ownership
     ├── Accel.h/.cpp            OptiX acceleration structure: BLAS per mesh + TLAS
     ├── SceneLoader.h/.cpp      glTF 2.0 loader (tinygltf); populates Scene from file
     └── CMakeLists.txt          Executable target, include paths, link libraries
@@ -168,6 +176,9 @@ Visual Studio C++ workload is missing. Open the VS Installer, modify the 2022 in
 
 **Image is very dark or very bright**  
 Adjust the **Env Exposure** slider in the Raytracer panel. For scenes with emissive materials adjust the emissive scale on the material.
+
+**Scene with glass converges slowly despite HDRI**  
+HDRI NEE fires only on diffuse bounces. Paths that escape through glass (transmission) follow the BSDF and are unaffected by NEE — this is correct behaviour. Increase `MAX_BOUNCES` in `devicePrograms.cu` if light needs more bounces to exit the glass.
 
 **Depth of field has no visible effect**  
 Ensure f-stop is low (try f/2 or f/1.4) and that objects in the scene are at a different distance from the **Focus Distance** setting in the Node Properties camera panel.

@@ -6,6 +6,10 @@
 #include <vector>
 #include <string>
 
+// CUdeviceptr is unsigned long long on all 64-bit CUDA targets; use the
+// same underlying type here so Texture.h stays free of the CUDA driver API.
+using CdfDevicePtr = std::uint64_t;
+
 enum class PixelFormat { RGBA8, RGBA32F };
 
 // Unified host+GPU texture — covers both LDR (uint8_t) and HDR (float) images.
@@ -32,6 +36,11 @@ struct Texture
     // GPU state — managed by uploadToGpu() / freeTexture() below.
     cudaArray_t         gpuArray = nullptr;
     cudaTextureObject_t gpuTex   = 0;
+
+    // HDRI importance-sampling CDFs — allocated by buildEnvMapCdf(), freed by freeTexture().
+    // Non-null only on HDR env-map textures that have had their CDF built.
+    CdfDevicePtr cdfMarginal    = 0;  // device float[height]
+    CdfDevicePtr cdfConditional = 0;  // device float[height * width]
 };
 
 // ─── GPU lifecycle ────────────────────────────────────────────────────────────

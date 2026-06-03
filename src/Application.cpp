@@ -108,8 +108,7 @@ Application::~Application()
         m_sbtHitgroupBuffer = 0;
     }
 
-    freeTexture(m_envMap);
-    freeEnvMapCdf();
+    freeTexture(m_envMap);  // also frees CDF buffers via Texture::cdfMarginal/cdfConditional
 
     if (m_accumBuffer)
     {
@@ -741,8 +740,7 @@ void Application::loadScene(const std::string& path)
 void Application::loadEnvMap(const std::string& path)
 {
     m_envMapError.clear();
-    freeEnvMapCdf();       // release old CDF buffers before the texture
-    freeTexture(m_envMap);
+    freeTexture(m_envMap);  // releases texture + any previously built CDF
     m_envMapPath.clear();
 
     if (loadEXR(path, m_envMap, m_envMapError))
@@ -755,24 +753,6 @@ void Application::loadEnvMap(const std::string& path)
 }
 
 // ─── HDRI importance-sampling CDF ────────────────────────────────────────────
-
-void Application::freeEnvMapCdf()
-{
-    if (m_envMarginalCdfBuffer)
-    {
-        cudaFree(reinterpret_cast<void*>(m_envMarginalCdfBuffer));
-        m_envMarginalCdfBuffer = 0;
-    }
-    if (m_envConditionalCdfBuffer)
-    {
-        cudaFree(reinterpret_cast<void*>(m_envConditionalCdfBuffer));
-        m_envConditionalCdfBuffer = 0;
-    }
-    m_launchParams.envMarginalCdf    = nullptr;
-    m_launchParams.envConditionalCdf = nullptr;
-    m_launchParams.envCdfW           = 0;
-    m_launchParams.envCdfH           = 0;
-}
 
 void Application::buildEnvMapCdf()
 {
@@ -839,24 +819,18 @@ void Application::buildEnvMapCdf()
         marginalCdf[H - 1] = 1.f;  // force last entry exactly to 1
     }
 
-    // ── Upload to device ──────────────────────────────────────────────────────
-    freeEnvMapCdf();  // release any old buffers first
-
+    // ── Upload to device — stored on the Texture itself ──────────────────────
+    // Any previous CDF buffers are already freed by freeTexture() in loadEnvMap().
     const size_t marginalBytes    = static_cast<size_t>(H) * sizeof(float);
     const size_t conditionalBytes = static_cast<size_t>(H) * W * sizeof(float);
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envMarginalCdfBuffer),    marginalBytes));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envConditionalCdfBuffer), conditionalBytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envMap.cdfMarginal),    marginalBytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envMap.cdfConditional), conditionalBytes));
 
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envMarginalCdfBuffer),
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envMap.cdfMarginal),
                            marginalCdf.data(),    marginalBytes,    cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envConditionalCdfBuffer),
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envMap.cdfConditional),
                            conditionalCdf.data(), conditionalBytes, cudaMemcpyHostToDevice));
-
-    m_launchParams.envMarginalCdf    = reinterpret_cast<const float*>(m_envMarginalCdfBuffer);
-    m_launchParams.envConditionalCdf = reinterpret_cast<const float*>(m_envConditionalCdfBuffer);
-    m_launchParams.envCdfW           = W;
-    m_launchParams.envCdfH           = H;
 }
 
 // ─── Camera controller ───────────────────────────────────────────────────────
@@ -1136,10 +1110,10 @@ bool Application::tick()
         m_launchParams.envMap            = m_envMap.gpuTex;
         m_launchParams.envMapRotation    = m_envMapRotation;
         m_launchParams.envExposure       = m_envExposure;
-        m_launchParams.envMarginalCdf    = m_envMarginalCdfBuffer
-            ? reinterpret_cast<const float*>(m_envMarginalCdfBuffer)    : nullptr;
-        m_launchParams.envConditionalCdf = m_envConditionalCdfBuffer
-            ? reinterpret_cast<const float*>(m_envConditionalCdfBuffer) : nullptr;
+        m_launchParams.envMarginalCdf    = m_envMap.cdfMarginal
+            ? reinterpret_cast<const float*>(m_envMap.cdfMarginal)    : nullptr;
+        m_launchParams.envConditionalCdf = m_envMap.cdfConditional
+            ? reinterpret_cast<const float*>(m_envMap.cdfConditional) : nullptr;
         m_launchParams.envCdfW           = m_envMap.width;
         m_launchParams.envCdfH           = m_envMap.height;
         m_launchParams.accumBuffer    = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
@@ -1375,8 +1349,7 @@ bool Application::tick()
         ImGui::SameLine();
         if (ImGui::Button("Clear EXR"))
         {
-            freeEnvMapCdf();
-            freeTexture(m_envMap);
+            freeTexture(m_envMap);  // frees texture + CDF buffers
             m_envMapPath.clear();
             m_envMapError.clear();
             m_accumDirty = true;

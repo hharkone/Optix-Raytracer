@@ -80,16 +80,10 @@ void uploadToGpu(Texture& tex)
 
 void freeTexture(Texture& tex)
 {
-    if (tex.gpuTex)
-    {
-        cudaDestroyTextureObject(tex.gpuTex);
-        tex.gpuTex = 0;
-    }
-    if (tex.gpuArray)
-    {
-        cudaFreeArray(tex.gpuArray);
-        tex.gpuArray = nullptr;
-    }
+    if (tex.cdfConditional) { cudaFree(reinterpret_cast<void*>(tex.cdfConditional)); tex.cdfConditional = 0; }
+    if (tex.cdfMarginal)    { cudaFree(reinterpret_cast<void*>(tex.cdfMarginal));    tex.cdfMarginal    = 0; }
+    if (tex.gpuTex)         { cudaDestroyTextureObject(tex.gpuTex);                  tex.gpuTex         = 0; }
+    if (tex.gpuArray)       { cudaFreeArray(tex.gpuArray);                           tex.gpuArray       = nullptr; }
 }
 
 // ─── loadEXR ─────────────────────────────────────────────────────────────────
