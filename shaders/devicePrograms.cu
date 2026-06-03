@@ -298,6 +298,23 @@ extern "C" __global__ void __raygen__renderFrame()
             0, 1, 0,
             p0, p1);
 
+        // ── Denoiser guide layers: write on first bounce only ────────────────
+        if (bounce == 0)
+        {
+            if (optixLaunchParams.normalBuffer)
+            {
+                optixLaunchParams.normalBuffer[fbIdx] = vtx.hit
+                    ? make_float4(vtx.N.x, vtx.N.y, vtx.N.z, 0.0f)
+                    : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+            }
+            if (optixLaunchParams.albedoBuffer)
+            {
+                optixLaunchParams.albedoBuffer[fbIdx] = vtx.hit
+                    ? make_float4(vtx.albedo.x, vtx.albedo.y, vtx.albedo.z, 1.0f)
+                    : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+            }
+        }
+
         if (!vtx.hit)
         {
             radiance += throughput * sampleBackground(rayDir);
@@ -455,8 +472,15 @@ extern "C" __global__ void __raygen__renderFrame()
     acc.y += radiance.y;
     acc.z += radiance.z;
 
-    // ── Tone-map and gamma-encode ─────────────────────────────────────────────
+    // ── HDR average for denoiser ──────────────────────────────────────────────
     const float  inv = 1.0f / (float)(optixLaunchParams.sampleIndex + 1);
+    if (optixLaunchParams.hdrBuffer)
+    {
+        optixLaunchParams.hdrBuffer[fbIdx] =
+            make_float4(acc.x * inv, acc.y * inv, acc.z * inv, 1.0f);
+    }
+
+    // ── Tone-map and gamma-encode ─────────────────────────────────────────────
     float3 avg = make_float3(acc.x * inv, acc.y * inv, acc.z * inv);
 
     // Reinhard: [0, ∞) → [0, 1)

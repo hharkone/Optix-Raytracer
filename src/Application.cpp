@@ -60,6 +60,7 @@ Application::Application(int width, int height, const std::string& title,
     initImGui();
     initCuda();
     initOptix();
+    initDenoiser();
     buildPipeline(ptxDir);
 
     // Hot-reload — remember where the PTX lives and when it was last written
@@ -121,6 +122,21 @@ Application::~Application()
     }
 
     m_accel.reset();  // free AS device memory before destroying OptiX context
+
+    // ── Denoiser resources ────────────────────────────────────────────────────
+    if (m_denoiser)
+    {
+        optixDenoiserDestroy(m_denoiser);
+        m_denoiser = nullptr;
+    }
+    if (m_denoiserIntensity) { cudaFree(reinterpret_cast<void*>(m_denoiserIntensity)); m_denoiserIntensity = 0; }
+    if (m_normalBuffer)      { cudaFree(reinterpret_cast<void*>(m_normalBuffer));      m_normalBuffer      = 0; }
+    if (m_albedoBuffer)      { cudaFree(reinterpret_cast<void*>(m_albedoBuffer));      m_albedoBuffer      = 0; }
+    if (m_hdrBuffer)         { cudaFree(reinterpret_cast<void*>(m_hdrBuffer));         m_hdrBuffer         = 0; }
+    if (m_denoisedBuffer)    { cudaFree(reinterpret_cast<void*>(m_denoisedBuffer));    m_denoisedBuffer    = 0; }
+    if (m_denoiserState)     { cudaFree(reinterpret_cast<void*>(m_denoiserState));     m_denoiserState     = 0; }
+    if (m_denoiserScratch)   { cudaFree(reinterpret_cast<void*>(m_denoiserScratch));   m_denoiserScratch   = 0; }
+    delete[] h_hdrBuffer;    h_hdrBuffer = nullptr;
 
     if (m_pipeline)   { optixPipelineDestroy(m_pipeline);       m_pipeline   = nullptr; }
     if (m_pgHitgroup) { optixProgramGroupDestroy(m_pgHitgroup); m_pgHitgroup = nullptr; }
@@ -233,6 +249,19 @@ void Application::initOptix()
 
     CUcontext cuCtx = 0; // 0 = use the CUDA runtime's current context
     OPTIX_CHECK(optixDeviceContextCreate(cuCtx, &opts, &m_optixContext));
+}
+
+void Application::initDenoiser()
+{
+    OptixDenoiserOptions denoiserOpts = {};
+    denoiserOpts.guideNormal = 1;
+    denoiserOpts.guideAlbedo = 1;
+    OPTIX_CHECK(optixDenoiserCreate(
+        m_optixContext,
+        OPTIX_DENOISER_MODEL_KIND_HDR,
+        &denoiserOpts,
+        &m_denoiser));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_denoiserIntensity), sizeof(float)));
 }
 
 // ─── SBT record types ────────────────────────────────────────────────────────
@@ -540,6 +569,44 @@ void Application::resizeFramebuffer(int w, int h)
     }
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_accumBuffer), pixelCount * sizeof(float4)));
     m_accumDirty = true;
+
+    // ── Denoiser guide + working buffers ──────────────────────────────────────
+    if (m_normalBuffer)    { cudaFree(reinterpret_cast<void*>(m_normalBuffer));    m_normalBuffer    = 0; }
+    if (m_albedoBuffer)    { cudaFree(reinterpret_cast<void*>(m_albedoBuffer));    m_albedoBuffer    = 0; }
+    if (m_hdrBuffer)       { cudaFree(reinterpret_cast<void*>(m_hdrBuffer));       m_hdrBuffer       = 0; }
+    if (m_denoisedBuffer)  { cudaFree(reinterpret_cast<void*>(m_denoisedBuffer));  m_denoisedBuffer  = 0; }
+    if (m_denoiserState)   { cudaFree(reinterpret_cast<void*>(m_denoiserState));   m_denoiserState   = 0; }
+    if (m_denoiserScratch) { cudaFree(reinterpret_cast<void*>(m_denoiserScratch)); m_denoiserScratch = 0; }
+    delete[] h_hdrBuffer;  h_hdrBuffer = nullptr;
+
+    const size_t float4Bytes = pixelCount * sizeof(float4);
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_normalBuffer),   float4Bytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_albedoBuffer),   float4Bytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_hdrBuffer),      float4Bytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_denoisedBuffer), float4Bytes));
+    h_hdrBuffer = new float4[pixelCount];
+
+    if (m_denoiser)
+    {
+        OptixDenoiserSizes sizes = {};
+        OPTIX_CHECK(optixDenoiserComputeMemoryResources(
+            m_denoiser,
+            static_cast<unsigned int>(w),
+            static_cast<unsigned int>(h),
+            &sizes));
+        m_denoiserStateSize   = sizes.stateSizeInBytes;
+        m_denoiserScratchSize = sizes.withoutOverlapScratchSizeInBytes;
+
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_denoiserState),   m_denoiserStateSize));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_denoiserScratch), m_denoiserScratchSize));
+
+        OPTIX_CHECK(optixDenoiserSetup(
+            m_denoiser, nullptr,
+            static_cast<unsigned int>(w),
+            static_cast<unsigned int>(h),
+            m_denoiserState,   m_denoiserStateSize,
+            m_denoiserScratch, m_denoiserScratchSize));
+    }
 
     glGenTextures(1, &m_displayTexture);
     glBindTexture(GL_TEXTURE_2D, m_displayTexture);
@@ -928,6 +995,9 @@ bool Application::tick()
         m_launchParams.accumBuffer    = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
         m_launchParams.sampleIndex    = m_sampleCount;
         m_launchParams.materials      = m_materialsBuffer ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
+        m_launchParams.normalBuffer   = m_normalBuffer ? reinterpret_cast<float4*>(m_normalBuffer) : nullptr;
+        m_launchParams.albedoBuffer   = m_albedoBuffer ? reinterpret_cast<float4*>(m_albedoBuffer) : nullptr;
+        m_launchParams.hdrBuffer      = m_hdrBuffer    ? reinterpret_cast<float4*>(m_hdrBuffer)    : nullptr;
 
         // Camera basis vectors derived from the scene camera each frame
         {
@@ -979,11 +1049,88 @@ bool Application::tick()
         CUDA_CHECK(cudaDeviceSynchronize());
         ++m_sampleCount;
 
-        // Copy rendered result from device to host, then upload to GL texture
-        CUDA_CHECK(cudaMemcpy(
-            h_colorBuffer, d_colorBuffer,
-            static_cast<size_t>(m_viewportWidth) * m_viewportHeight * sizeof(uchar4),
-            cudaMemcpyDeviceToHost));
+        // ── Denoiser post-process ─────────────────────────────────────────────
+        const bool runDenoiser = m_denoiserEnabled
+                              && m_denoiser
+                              && m_hdrBuffer
+                              && m_denoiserState
+                              && m_denoiserInterval > 0
+                              && (m_sampleCount % m_denoiserInterval == 0);
+        if (runDenoiser)
+        {
+            const auto makeImage = [&](CUdeviceptr ptr) -> OptixImage2D
+            {
+                OptixImage2D img          = {};
+                img.data                  = ptr;
+                img.width                 = static_cast<unsigned int>(m_viewportWidth);
+                img.height                = static_cast<unsigned int>(m_viewportHeight);
+                img.rowStrideInBytes      = img.width * static_cast<unsigned int>(sizeof(float4));
+                img.pixelStrideInBytes    = sizeof(float4);
+                img.format                = OPTIX_PIXEL_FORMAT_FLOAT4;
+                return img;
+            };
+
+            OptixDenoiserLayer layer = {};
+            layer.input              = makeImage(m_hdrBuffer);
+            layer.output             = makeImage(m_denoisedBuffer);
+
+            OptixDenoiserGuideLayer guide = {};
+            guide.normal                  = makeImage(m_normalBuffer);
+            guide.albedo                  = makeImage(m_albedoBuffer);
+
+            OPTIX_CHECK(optixDenoiserComputeIntensity(
+                m_denoiser, nullptr,
+                &layer.input,
+                m_denoiserIntensity,
+                m_denoiserScratch, m_denoiserScratchSize));
+
+            OptixDenoiserParams denoiserParams = {};
+            denoiserParams.hdrIntensity        = m_denoiserIntensity;
+            denoiserParams.blendFactor         = 0.0f;
+
+            OPTIX_CHECK(optixDenoiserInvoke(
+                m_denoiser, nullptr,
+                &denoiserParams,
+                m_denoiserState,   m_denoiserStateSize,
+                &guide,
+                &layer, 1,
+                0, 0,
+                m_denoiserScratch, m_denoiserScratchSize));
+
+            CUDA_CHECK(cudaDeviceSynchronize());
+
+            // Copy denoised float4 to host and CPU-tone-map into h_colorBuffer
+            const size_t pixelCount = static_cast<size_t>(m_viewportWidth) * m_viewportHeight;
+            CUDA_CHECK(cudaMemcpy(h_hdrBuffer,
+                reinterpret_cast<void*>(m_denoisedBuffer),
+                pixelCount * sizeof(float4),
+                cudaMemcpyDeviceToHost));
+
+            for (size_t i = 0; i < pixelCount; ++i)
+            {
+                float r = h_hdrBuffer[i].x / (h_hdrBuffer[i].x + 1.0f);
+                float g = h_hdrBuffer[i].y / (h_hdrBuffer[i].y + 1.0f);
+                float b = h_hdrBuffer[i].z / (h_hdrBuffer[i].z + 1.0f);
+                r = powf(std::max(0.0f, r), 1.0f / 2.2f);
+                g = powf(std::max(0.0f, g), 1.0f / 2.2f);
+                b = powf(std::max(0.0f, b), 1.0f / 2.2f);
+                h_colorBuffer[i] = make_uchar4(
+                    static_cast<unsigned char>(r * 255.0f),
+                    static_cast<unsigned char>(g * 255.0f),
+                    static_cast<unsigned char>(b * 255.0f),
+                    255u);
+            }
+        }
+        else if (!m_denoiserEnabled)
+        {
+            // Denoiser off: copy tone-mapped result written by raygen
+            // When denoiser is on but skipped this frame, h_colorBuffer already
+            // holds the last denoised output — leave it untouched.
+            CUDA_CHECK(cudaMemcpy(
+                h_colorBuffer, d_colorBuffer,
+                static_cast<size_t>(m_viewportWidth) * m_viewportHeight * sizeof(uchar4),
+                cudaMemcpyDeviceToHost));
+        }
 
         glBindTexture(GL_TEXTURE_2D, m_displayTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
@@ -1145,6 +1292,15 @@ bool Application::tick()
     if (ImGui::Button("Reset Accumulation"))
     {
         m_accumDirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Denoiser", &m_denoiserEnabled))
+    {
+        m_accumDirty = true;
+    }
+    if (m_denoiserEnabled)
+    {
+        ImGui::DragInt("Denoise every N samples", &m_denoiserInterval, 1, 1, 10000);
     }
 
     ImGui::Separator();

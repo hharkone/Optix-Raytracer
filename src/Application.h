@@ -66,6 +66,7 @@ private:
     void loadScene(const std::string& path);
     void loadEnvMap(const std::string& path);
     void uploadMaterials();  // (re)upload host materials to the GPU buffer
+    void initDenoiser();     // create OptixDenoiser; called once after initOptix()
 
     static void optixLogCallback(unsigned int level,
                                  const char*  tag,
@@ -92,6 +93,21 @@ private:
     CUdeviceptr m_accumBuffer  = 0;   // float4, width * height
     uint32_t    m_sampleCount  = 0;
     bool        m_accumDirty   = true; // true = clear before the next launch
+
+    // OptiX AI denoiser (optional post-process after optixLaunch)
+    OptixDenoiser m_denoiser            = nullptr;
+    CUdeviceptr   m_denoiserState       = 0;
+    size_t        m_denoiserStateSize   = 0;
+    CUdeviceptr   m_denoiserScratch     = 0;
+    size_t        m_denoiserScratchSize = 0;
+    CUdeviceptr   m_denoiserIntensity   = 0;  // single float for intensity computation
+    CUdeviceptr   m_normalBuffer        = 0;  // float4 × W×H — first-hit world normal
+    CUdeviceptr   m_albedoBuffer        = 0;  // float4 × W×H — first-hit material albedo
+    CUdeviceptr   m_hdrBuffer           = 0;  // float4 × W×H — running HDR average
+    CUdeviceptr   m_denoisedBuffer      = 0;  // float4 × W×H — denoiser output
+    float4*       h_hdrBuffer           = nullptr;  // host staging for CPU tone-map
+    bool          m_denoiserEnabled     = false;
+    int           m_denoiserInterval    = 500;   // run denoiser every N samples
 
     // Launch parameters — host struct updated each frame, device copy passed to optixLaunch
     LaunchParams m_launchParams       = {};

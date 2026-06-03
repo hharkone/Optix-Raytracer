@@ -32,6 +32,11 @@ struct LaunchParams
     float4*  accumBuffer;
     uint32_t sampleIndex;  // number of samples already accumulated
 
+    // Denoiser guide layers — null when denoiser is disabled.
+    float4* normalBuffer;  // first-hit world-space shading normal (written every frame)
+    float4* albedoBuffer;  // first-hit material albedo          (written every frame)
+    float4* hdrBuffer;     // running HDR average = accumBuffer / sampleIndex
+
     // Scene materials — device pointer to a MaterialData array, indexed by
     // MeshData::materialIndex.  Null when no scene is loaded.
     const MaterialData* materials;
