@@ -1,7 +1,9 @@
 #include "Scene.h"
+#include "Math.h"
 
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 int Scene::addMesh(Mesh mesh)
 {
@@ -101,4 +103,18 @@ void Scene::clear()
 bool Scene::empty() const
 {
     return m_meshes.empty();
+}
+
+Matrix4x4 Scene::computeWorldTransform(int nodeIdx) const
+{
+    // Build the ancestor chain from nodeIdx up to the root.
+    std::vector<int> chain;
+    for (int i = nodeIdx; i >= 0; i = m_nodes[i]->parent)
+        chain.push_back(i);
+
+    // Multiply from root → node (reverse order).
+    Matrix4x4 world = mat4Identity();
+    for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i)
+        world = mat4Multiply(world, m_nodes[chain[i]]->localTransform);
+    return world;
 }

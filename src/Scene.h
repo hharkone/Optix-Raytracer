@@ -44,6 +44,9 @@ public:
     const std::vector<std::unique_ptr<Node3D>>& nodes()     const;
     const std::vector<int>&                     rootNodes() const;
 
+    // Accumulate transforms from the root down to nodeIdx (world = parent × … × local).
+    Matrix4x4 computeWorldTransform(int nodeIdx) const;
+
     void clear();        // remove all meshes, materials, textures, nodes, and reset camera
     bool empty() const;  // true when there are no meshes
 

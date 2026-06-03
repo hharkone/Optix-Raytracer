@@ -103,6 +103,21 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 target_compile_options(imgui PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W0>)
 
+# ImGuizmo — 3D gizmo (translate / rotate / scale) overlay for Dear ImGui.
+# No CMakeLists.txt; compiled as part of the imgui STATIC target so it
+# shares ImGui's context and link dependencies automatically.
+FetchContent_Declare(imguizmo
+    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(imguizmo)
+if(NOT imguizmo_POPULATED)
+    FetchContent_Populate(imguizmo)
+endif()
+target_sources(imgui PRIVATE ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp)
+target_include_directories(imgui PUBLIC ${imguizmo_SOURCE_DIR}/src)
+
 # tinygltf v2.8.21 — glTF 2.0 loader (header-only; implementation defined in SceneLoader.cpp)
 FetchContent_Declare(tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git

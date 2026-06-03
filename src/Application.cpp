@@ -1058,6 +1058,7 @@ bool Application::tick()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    ImGuizmo::BeginFrame();  // must be called once per frame, right after ImGui::NewFrame()
 
     // Camera input is processed here — after NewFrame() so WantCaptureMouse /
     // WantCaptureKeyboard are current, but before the GPU launch so this frame
@@ -1274,12 +1275,85 @@ bool Application::tick()
 
         // UV0=(0,1) UV1=(1,0): flip vertically so OptiX row-0=bottom matches
         // OpenGL's bottom-up texture convention when displayed top-down by ImGui.
+        const ImVec2 imageScreenPos = ImGui::GetCursorScreenPos();
         ImGui::Image(
             (ImTextureID)(intptr_t)m_displayTexture,
             ImVec2(static_cast<float>(m_viewportWidth),
                    static_cast<float>(m_viewportHeight)),
             ImVec2(0.0f, 1.0f),
             ImVec2(1.0f, 0.0f));
+
+        // ── 3D gizmo overlay ──────────────────────────────────────────────────
+        // Render the ImGuizmo gizmo on top of the viewport image for the
+        // currently selected scene-graph node.
+        if (m_selectedNodeIdx >= 0
+            && m_selectedNodeIdx < static_cast<int>(m_scene->nodes().size()))
+        {
+            const float vpW = static_cast<float>(m_viewportWidth);
+            const float vpH = static_cast<float>(m_viewportHeight);
+
+            ImGuizmo::SetOrthographic(false);
+            ImGuizmo::SetDrawlist();
+            ImGuizmo::SetRect(imageScreenPos.x, imageScreenPos.y, vpW, vpH);
+
+            // ── View matrix (column-major) ────────────────────────────────────
+            const float3 eye = m_launchParams.eye;
+            const float3 U   = m_launchParams.U;
+            const float3 V   = m_launchParams.V;
+            const float3 W   = m_launchParams.W;
+
+            // Normalise U and V to recover unit right/up directions
+            auto len3  = [](float3 v){ return sqrtf(v.x*v.x + v.y*v.y + v.z*v.z); };
+            auto dot3  = [](float3 a, float3 b){ return a.x*b.x + a.y*b.y + a.z*b.z; };
+            const float3 R  = { U.x / len3(U), U.y / len3(U), U.z / len3(U) };
+            const float3 Up = { V.x / len3(V), V.y / len3(V), V.z / len3(V) };
+
+            const float view[16] = {
+                R.x,         Up.x,        -W.x,       0.f,
+                R.y,         Up.y,        -W.y,       0.f,
+                R.z,         Up.z,        -W.z,       0.f,
+                -dot3(R, eye), -dot3(Up, eye), dot3(W, eye), 1.f
+            };
+
+            // ── Projection matrix (column-major) ──────────────────────────────
+            const float tanHalfFovV = len3(V);
+            const float f           = 1.0f / tanHalfFovV;
+            const float aspect      = vpW / vpH;
+            const float zNear = 0.01f, zFar = 10000.0f;
+            const float proj[16] = {
+                f / aspect, 0.f, 0.f,  0.f,
+                0.f,        f,   0.f,  0.f,
+                0.f, 0.f, (zFar + zNear) / (zNear - zFar), -1.f,
+                0.f, 0.f, 2.0f * zFar * zNear / (zNear - zFar), 0.f
+            };
+
+            // ── World transform → column-major float[16] ─────────────────────
+            Matrix4x4 worldTx = m_scene->computeWorldTransform(m_selectedNodeIdx);
+            float gizmoMatrix[16];
+            mat4ToColMajor(worldTx, gizmoMatrix);
+
+            ImGuizmo::Manipulate(view, proj, m_gizmoOp, m_gizmoMode, gizmoMatrix);
+
+            if (ImGuizmo::IsUsing())
+            {
+                // Convert result back to row-major world transform
+                Matrix4x4 newWorldTx = mat4FromColMajor(gizmoMatrix);
+
+                // Compute the new local transform relative to the parent
+                Node3D& node = m_scene->nodeAt(m_selectedNodeIdx);
+                if (node.parent >= 0)
+                {
+                    Matrix4x4 parentWorld = m_scene->computeWorldTransform(node.parent);
+                    node.localTransform   = mat4Multiply(mat4Inverse(parentWorld), newWorldTx);
+                }
+                else
+                {
+                    node.localTransform = newWorldTx;
+                }
+
+                rebuildTlas();
+            }
+        }
     }
 
     ImGui::End();
@@ -1580,7 +1654,29 @@ bool Application::tick()
         ImGui::Text("Name: %s", node.name.empty() ? "(unnamed)" : node.name.c_str());
         ImGui::Separator();
 
-        // ── Local transform (4×4 matrix, row by row) ──────────────────────────
+        // ── Gizmo operation selector ──────────────────────────────────────────
+        ImGui::Text("Gizmo:");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Translate", m_gizmoOp == ImGuizmo::TRANSLATE))
+            m_gizmoOp = ImGuizmo::TRANSLATE;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Rotate", m_gizmoOp == ImGuizmo::ROTATE))
+            m_gizmoOp = ImGuizmo::ROTATE;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Scale", m_gizmoOp == ImGuizmo::SCALE))
+            m_gizmoOp = ImGuizmo::SCALE;
+        ImGui::SameLine();
+        ImGui::Spacing();
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Local", m_gizmoMode == ImGuizmo::LOCAL))
+            m_gizmoMode = ImGuizmo::LOCAL;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("World", m_gizmoMode == ImGuizmo::WORLD))
+            m_gizmoMode = ImGuizmo::WORLD;
+
+        ImGui::Separator();
+
+        // ── Local transform (raw matrix, for fine-grained editing) ────────────
         if (ImGui::CollapsingHeader("Local Transform"))
         {
             bool transformChanged = false;
@@ -1589,17 +1685,12 @@ bool Application::tick()
             {
                 ImGui::PushID(row);
                 if (ImGui::DragFloat4("", node.localTransform.m[row], 0.01f))
-                {
                     transformChanged = true;
-                }
                 ImGui::PopID();
             }
             ImGui::PopItemWidth();
-
             if (transformChanged)
-            {
                 rebuildTlas();
-            }
         }
 
         // ── Type-specific content ─────────────────────────────────────────────

@@ -13,6 +13,9 @@
 #include "Scene.h"
 #include "Texture.h"
 
+#include <imgui.h>       // must precede ImGuizmo.h — it relies on ImGui types
+#include <ImGuizmo.h>
+
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -158,6 +161,10 @@ private:
     bool   m_prevRmb         = false;  // right mouse button state last frame
     bool   m_viewportHovered  = false;  // ImGui hover flag (set during Viewport panel)
     int    m_selectedNodeIdx  = -1;     // Scene Graph selection; -1 = nothing selected
+
+    // 3D gizmo (ImGuizmo) state
+    ImGuizmo::OPERATION m_gizmoOp   = ImGuizmo::TRANSLATE;
+    ImGuizmo::MODE      m_gizmoMode = ImGuizmo::LOCAL;
 
     void updateCamera();  // process input, rebuild scene camera matrix
 };

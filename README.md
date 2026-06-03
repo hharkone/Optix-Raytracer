@@ -23,7 +23,7 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, C++17, and D
 - **glTF 2.0 / GLB loading** — meshes, PBR materials (including `KHR_materials_transmission`, `KHR_materials_ior`, `KHR_materials_clearcoat`), base-colour textures, cameras, scene hierarchy
 - **Scene graph** — full glTF node hierarchy preserved as a `Node3D` tree (`MeshNode`, `CameraNode`, `GroupNode`)
 - **Node transforms applied to TLAS** — mesh instances positioned using accumulated world-space transforms from the node hierarchy
-- **Live transform editing** — drag node transform values in the Node Properties panel; TLAS-only rebuild keeps BLASes intact
+- **Live transform editing** — 3D gizmo (ImGuizmo) overlaid on the viewport for interactive Translate / Rotate / Scale in Local or World space; raw matrix fields remain available for precise values; TLAS-only rebuild keeps BLASes intact
 
 ### Camera
 - **Free-fly camera** — WASD (move), EQ (up/down), right-drag (look), Ctrl+drag (orbit origin), Shift+drag (rotate environment)
@@ -37,7 +37,7 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, C++17, and D
 | **Raytracer** | GPU stats, sample count, denoiser toggle, environment controls |
 | **Materials** | Per-material editor with all PBR parameters including clearcoat, transmission, and IOR |
 | **Scene Graph** | Hierarchy tree of all scene nodes (click to select) |
-| **Node Properties** | Transform matrix, material editor, camera parameters for the selected node |
+| **Node Properties** | Gizmo mode selector (Translate / Rotate / Scale, Local / World), raw transform matrix, material editor, camera parameters for the selected node |
 
 ### Performance
 - **PTX hot-reload** — edit `devicePrograms.cu`, rebuild the PTX, and the shader reloads without restarting; accumulation resets automatically
@@ -77,7 +77,7 @@ build.bat          :: Debug build (configures automatically on first run)
 build.bat Release  :: Release build
 ```
 
-On first run, CMake fetches GLFW, ImGui, tinygltf, tinyexr, and nativefiledialog-extended from GitHub — internet access is required. Delete `build\CMakeCache.txt` to force a full reconfigure.
+On first run, CMake fetches GLFW, ImGui, ImGuizmo, tinygltf, tinyexr, and nativefiledialog-extended from GitHub — internet access is required. Delete `build\CMakeCache.txt` to force a full reconfigure.
 
 ### Visual Studio
 
@@ -119,6 +119,10 @@ cmake --build build --config Release --parallel
 | **W / S** | Move forward / backward |
 | **A / D** | Strafe left / right |
 | **E / Q** | Move up / down |
+| **Click node in Scene Graph** | Select node; 3D gizmo appears in Viewport |
+| **Drag gizmo handle** | Translate / rotate / scale the selected node |
+| **Translate / Rotate / Scale buttons** | Switch gizmo operation (Node Properties panel) |
+| **Local / World buttons** | Switch gizmo reference space (Node Properties panel) |
 | **Open glTF…** | Browse for `.gltf` or `.glb` scene file |
 | **Open EXR…** | Browse for an equirectangular HDR environment map |
 | **Clear EXR** | Remove the environment map (falls back to procedural sky) |
@@ -146,7 +150,7 @@ Optix-Raytracer/
 └── src/
     ├── main.cpp                Entry point
     ├── Application.h/.cpp      Window, CUDA/OptiX init, ImGui UI, per-frame render loop
-    ├── Math.h                  Matrix4x4 + inline mat4Identity / mat4Multiply
+    ├── Math.h                  Matrix4x4 + mat4Identity / mat4Multiply / mat4Inverse / col-major converters
     ├── Camera.h                Camera struct: transform, FOV, DoF parameters
     ├── Node3D.h                Node3D base + MeshNode, CameraNode, GroupNode
     ├── Scene.h/.cpp            Scene container: meshes, materials, textures, node tree
