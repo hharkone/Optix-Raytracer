@@ -106,8 +106,9 @@ private:
     CUdeviceptr   m_hdrBuffer           = 0;  // float4 × W×H — running HDR average
     CUdeviceptr   m_denoisedBuffer      = 0;  // float4 × W×H — denoiser output
     float4*       h_hdrBuffer           = nullptr;  // host staging for CPU tone-map
-    bool          m_denoiserEnabled     = false;
-    int           m_denoiserInterval    = 500;   // run denoiser every N samples
+    bool          m_denoiserEnabled         = false;
+    int           m_denoiserInterval        = 50;    // run denoiser every N samples
+    bool          m_hasValidDenoisedFrame   = false; // false after accum reset until first denoise
 
     // Launch parameters — host struct updated each frame, device copy passed to optixLaunch
     LaunchParams m_launchParams       = {};

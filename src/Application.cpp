@@ -851,10 +851,10 @@ void Application::updateCamera()
     const float sp = sinf(m_camPitch),  cp = cosf(m_camPitch);
 
     Camera cam = m_scene->camera();
-    cam.transform.m[0][0] =  cy;     cam.transform.m[0][1] = -sy*sp;  cam.transform.m[0][2] = -sy*cp;  cam.transform.m[0][3] = m_camPos.x;
-    cam.transform.m[1][0] = 0.0f;     cam.transform.m[1][1] =  cp;     cam.transform.m[1][2] = -sp;     cam.transform.m[1][3] = m_camPos.y;
-    cam.transform.m[2][0] =  sy;     cam.transform.m[2][1] =  cy*sp;  cam.transform.m[2][2] =  cy*cp;  cam.transform.m[2][3] = m_camPos.z;
-    cam.transform.m[3][0] = 0.0f;     cam.transform.m[3][1] = 0.0f;     cam.transform.m[3][2] = 0.0f;     cam.transform.m[3][3] = 1.0f;
+    cam.transform.m[0][0] =  cy;  cam.transform.m[0][1] = -sy*sp; cam.transform.m[0][2] = -sy*cp; cam.transform.m[0][3] = m_camPos.x;
+    cam.transform.m[1][0] = 0.0f; cam.transform.m[1][1] =  cp;    cam.transform.m[1][2] = -sp;    cam.transform.m[1][3] = m_camPos.y;
+    cam.transform.m[2][0] =  sy;  cam.transform.m[2][1] =  cy*sp; cam.transform.m[2][2] =  cy*cp; cam.transform.m[2][3] = m_camPos.z;
+    cam.transform.m[3][0] = 0.0f; cam.transform.m[3][1] =  0.0f;  cam.transform.m[3][2] =  0.0f;  cam.transform.m[3][3] = 1.0f;
     m_scene->setCamera(std::move(cam));
 }
 
@@ -925,8 +925,8 @@ bool Application::tick()
         {
             const float deltaMs = std::chrono::duration<float, std::milli>(
                 now - m_frameStart).count();
-            // Exponential moving average — α=0.1 keeps the display readable
-            m_frameTimeMs = 0.1f * deltaMs + 0.9f * m_frameTimeMs;
+            // Exponential moving average — α=0.02 ≈ 50-frame window for stable stats
+            m_frameTimeMs = 0.02f * deltaMs + 0.98f * m_frameTimeMs;
         }
         else if (m_frameStart != std::chrono::steady_clock::time_point{})
         {
@@ -983,8 +983,9 @@ bool Application::tick()
         {
             CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(m_accumBuffer), 0,
                 static_cast<size_t>(m_viewportWidth) * m_viewportHeight * sizeof(float4)));
-            m_sampleCount = 0;
-            m_accumDirty  = false;
+            m_sampleCount             = 0;
+            m_accumDirty              = false;
+            m_hasValidDenoisedFrame   = false;  // stale denoised frame is now invalid
         }
 
         m_launchParams.colorBuffer    = d_colorBuffer;
@@ -1055,7 +1056,7 @@ bool Application::tick()
                               && m_hdrBuffer
                               && m_denoiserState
                               && m_denoiserInterval > 0
-                              && (m_sampleCount % m_denoiserInterval == 0);
+                              && (m_sampleCount % m_denoiserInterval == 0 || m_sampleCount == 25);
         if (runDenoiser)
         {
             const auto makeImage = [&](CUdeviceptr ptr) -> OptixImage2D
@@ -1120,17 +1121,21 @@ bool Application::tick()
                     static_cast<unsigned char>(b * 255.0f),
                     255u);
             }
+            m_hasValidDenoisedFrame = true;
         }
-        else if (!m_denoiserEnabled)
+        else if (!m_denoiserEnabled || !m_hasValidDenoisedFrame)
         {
-            // Denoiser off: copy tone-mapped result written by raygen
-            // When denoiser is on but skipped this frame, h_colorBuffer already
-            // holds the last denoised output — leave it untouched.
+            // Show the live raygen output when:
+            //  • denoiser is off, OR
+            //  • denoiser is on but hasn't fired yet since the last accum reset
+            //    (e.g. camera just moved) — keeps the viewport responsive.
             CUDA_CHECK(cudaMemcpy(
                 h_colorBuffer, d_colorBuffer,
                 static_cast<size_t>(m_viewportWidth) * m_viewportHeight * sizeof(uchar4),
                 cudaMemcpyDeviceToHost));
         }
+        // else: denoiser enabled, valid denoised frame exists, but interval not reached —
+        //        h_colorBuffer already holds the last denoised result; leave it untouched.
 
         glBindTexture(GL_TEXTURE_2D, m_displayTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
