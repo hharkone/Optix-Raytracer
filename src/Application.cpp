@@ -579,6 +579,7 @@ void Application::loadScene(const std::string& path)
     m_scene->clear();
     m_accel.reset();
     m_loadError.clear();
+    m_selectedNodeIdx = -1;
     m_sceneFilePath.clear();
 
     if (loadGltfFile(path, *m_scene, m_loadError))
@@ -784,7 +785,7 @@ void Application::updateCamera()
 
 // ─── Scene Graph helpers ──────────────────────────────────────────────────────
 
-static void drawNode3D(const Scene& scene, int nodeIdx)
+static void drawNode3D(const Scene& scene, int nodeIdx, int& selectedNodeIdx)
 {
     const Node3D& node = *scene.nodes()[nodeIdx];
 
@@ -795,6 +796,10 @@ static void drawNode3D(const Scene& scene, int nodeIdx)
 
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow
                              | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (nodeIdx == selectedNodeIdx)
+    {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
     if (node.children.empty())
     {
         flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
@@ -803,11 +808,16 @@ static void drawNode3D(const Scene& scene, int nodeIdx)
     ImGui::PushID(nodeIdx);
     const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
 
+    if (ImGui::IsItemClicked())
+    {
+        selectedNodeIdx = nodeIdx;
+    }
+
     if (open && !node.children.empty())
     {
         for (int childIdx : node.children)
         {
-            drawNode3D(scene, childIdx);
+            drawNode3D(scene, childIdx, selectedNodeIdx);
         }
         ImGui::TreePop();
     }
@@ -1230,7 +1240,113 @@ bool Application::tick()
         }
         for (int rootIdx : m_scene->rootNodes())
         {
-            drawNode3D(*m_scene, rootIdx);
+            drawNode3D(*m_scene, rootIdx, m_selectedNodeIdx);
+        }
+    }
+
+    ImGui::End();
+
+    // ── Node Properties panel ─────────────────────────────────────────────────
+    ImGui::Begin("Node Properties");
+
+    if (m_selectedNodeIdx < 0 || m_selectedNodeIdx >= static_cast<int>(m_scene->nodes().size()))
+    {
+        ImGui::TextDisabled("No node selected");
+    }
+    else
+    {
+        Node3D& node = m_scene->nodeAt(m_selectedNodeIdx);
+
+        // ── Identity ──────────────────────────────────────────────────────────
+        ImGui::Text("Type: %s", node.typeName());
+        ImGui::Text("Name: %s", node.name.empty() ? "(unnamed)" : node.name.c_str());
+        ImGui::Separator();
+
+        // ── Local transform (4×4 matrix, row by row) ──────────────────────────
+        if (ImGui::CollapsingHeader("Local Transform"))
+        {
+            ImGui::PushItemWidth(-1.0f);
+            for (int row = 0; row < 4; ++row)
+            {
+                ImGui::PushID(row);
+                ImGui::DragFloat4("", node.localTransform.m[row], 0.01f);
+                ImGui::PopID();
+            }
+            ImGui::PopItemWidth();
+        }
+
+        // ── Type-specific content ─────────────────────────────────────────────
+        if (MeshNode* meshNode = dynamic_cast<MeshNode*>(&node))
+        {
+            ImGui::Separator();
+            ImGui::Text("Meshes: %d primitive(s)", static_cast<int>(meshNode->meshIndices.size()));
+
+            auto& mats      = m_scene->materials();
+            bool  anyChanged = false;
+
+            for (int meshIdx : meshNode->meshIndices)
+            {
+                const int matIdx = m_scene->meshes()[meshIdx].materialIndex;
+                if (matIdx < 0 || matIdx >= static_cast<int>(mats.size()))
+                {
+                    continue;
+                }
+
+                const std::string& matName = m_scene->materialName(matIdx);
+                const std::string  header  = matName.empty()
+                    ? ("Material " + std::to_string(matIdx))
+                    : matName;
+
+                ImGui::PushID(meshIdx);
+                if (ImGui::CollapsingHeader(header.c_str()))
+                {
+                    if (ImGui::ColorEdit3("Albedo",   &mats[matIdx].albedo.x))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::SliderFloat("Roughness",    &mats[matIdx].roughness,     0.0f, 1.0f))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::SliderFloat("Metallic",     &mats[matIdx].metallic,      0.0f, 1.0f))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::ColorEdit3("Emission",  &mats[matIdx].emission.x))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::DragFloat("Emission Scale", &mats[matIdx].emissionScale,
+                                         0.1f, 0.0f, 1000.0f, "%.2f"))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::SliderFloat("Transmission", &mats[matIdx].transmission, 0.0f, 1.0f, "%.3f"))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::SliderFloat("IOR",          &mats[matIdx].ior,          1.0f, 3.0f, "%.3f"))
+                    {
+                        anyChanged = true;
+                    }
+                }
+                ImGui::PopID();
+            }
+
+            if (anyChanged)
+            {
+                uploadMaterials();
+                m_accumDirty = true;
+            }
+        }
+        else if (dynamic_cast<CameraNode*>(&node))
+        {
+            ImGui::Separator();
+            const Camera& cam = m_scene->camera();
+            ImGui::Text("FOV:        %.1f deg", cam.yFov * (180.0f / 3.14159265f));
+            ImGui::Text("Aspect:     %.3f",     cam.aspectRatio);
+            ImGui::Text("Near / Far: %.4f / %.1f", cam.zNear, cam.zFar);
+            ImGui::TextDisabled("(camera driven by fly-cam controller)");
         }
     }
 

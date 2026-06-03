@@ -276,9 +276,9 @@ extern "C" __global__ void __raygen__renderFrame()
     float3 throughput = make_float3(1.0f, 1.0f, 1.0f);
     float3 radiance   = make_float3(0.0f, 0.0f, 0.0f);
 
-    // Beer-Lambert absorption: -log(albedo) per unit distance.
-    // Set when entering a transmissive medium, cleared on exit, unchanged on TIR.
-    float3 absorb = make_float3(0.04f, 0.01f, 0.04f);
+    // Beer-Lambert absorption coefficient: -log(albedo) per unit distance.
+    // Zero until a transmissive surface is entered; cleared again on exit.
+    float3 absorb = make_float3(0.0f, 0.0f, 0.0f);
 
     for (int bounce = 0; bounce < MAX_BOUNCES; ++bounce)
     {

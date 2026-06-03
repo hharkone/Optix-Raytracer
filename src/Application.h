@@ -131,7 +131,8 @@ private:
     double m_prevMouseX      = 0.0;
     double m_prevMouseY      = 0.0;
     bool   m_prevRmb         = false;  // right mouse button state last frame
-    bool   m_viewportHovered = false;  // ImGui hover flag (set during Viewport panel)
+    bool   m_viewportHovered  = false;  // ImGui hover flag (set during Viewport panel)
+    int    m_selectedNodeIdx  = -1;     // Scene Graph selection; -1 = nothing selected
 
     void updateCamera();  // process input, rebuild scene camera matrix
 };
