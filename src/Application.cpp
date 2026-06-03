@@ -1184,7 +1184,7 @@ bool Application::tick()
 
             if (ImGui::CollapsingHeader(header.c_str()))
             {
-                if (ImGui::ColorEdit3("Albedo",   &mats[i].albedo.x))
+                if (ImGui::ColorEdit3("Albedo",   &mats[i].albedo.x, ImGuiColorEditFlags_Float))
                 {
                     anyMatChanged = true;
                 }
@@ -1307,7 +1307,7 @@ bool Application::tick()
                 ImGui::PushID(meshIdx);
                 if (ImGui::CollapsingHeader(header.c_str()))
                 {
-                    if (ImGui::ColorEdit3("Albedo",   &mats[matIdx].albedo.x))
+                    if (ImGui::ColorEdit3("Albedo",   &mats[matIdx].albedo.x, ImGuiColorEditFlags_Float))
                     {
                         anyChanged = true;
                     }
