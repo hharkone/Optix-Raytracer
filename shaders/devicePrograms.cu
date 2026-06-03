@@ -52,10 +52,12 @@ struct PathVertex
     float3 emission;     // pre-scaled emissive radiance (emission * emissionScale)
     float  roughness;    // perceptual roughness [0, 1]
     float  metallic;     // metallic factor [0, 1]
-    float  transmission;       // 0 = opaque, 1 = fully transmissive
-    float  ior;               // index of refraction
-    float  absorptionDistance; // world-space units for full albedo absorption (Beer-Lambert scale)
-    float  t;                 // ray travel distance to this hit (for Beer-Lambert absorption)
+    float  transmission;        // 0 = opaque, 1 = fully transmissive
+    float  ior;                 // index of refraction
+    float  absorptionDistance;  // world-space units for full albedo absorption
+    float  clearcoat;           // clearcoat layer intensity [0, 1]
+    float  clearcoatRoughness;  // clearcoat layer roughness [0, 1]
+    float  t;                   // ray travel distance to this hit (Beer-Lambert)
     int    hit;          // 1 = geometry hit, 0 = ray escaped to background
 };
 
@@ -360,78 +362,105 @@ extern "C" __global__ void __raygen__renderFrame()
         // ── Emission ──────────────────────────────────────────────────────────
         radiance += throughput * vtx.emission;
 
-        // ── Three-way stochastic lobe selection ──────────────────────────────
+        // ── Lobe selection: clearcoat → specular → diffuse / refraction ─────────
         //
-        // Decision tree (single random draw per level):
-        //   1. specular   — probability p_spec (metallic / Fresnel)
-        //   2. diffuse    — probability (1 - p_spec) * (1 - transmission)
-        //   3. refraction — probability (1 - p_spec) *      transmission
+        // Clearcoat is sampled first: it's a dielectric layer (IOR 1.5, F0 = 0.04)
+        // on top of the base material.  If not chosen, the base material receives
+        // attenuated energy: throughput *= (1 − clearcoat · F_cc).
         //
-        // Both non-specular lobes share the same throughput weight
-        //   kNS = (1-F) * albedo / (1-p_spec)
-        // because transmission only changes direction, not energy.
+        // Within the base material:
+        //   1. specular   — p_spec (metallic / Fresnel)
+        //   2. diffuse    — (1 − p_spec) · (1 − transmission)
+        //   3. refraction — (1 − p_spec) ·      transmission
 
         const float alpha = fmaxf(vtx.roughness * vtx.roughness, 1e-3f);
 
-        // Front-facing normal: always points toward the incoming ray.
-        // vtx.N is the geometry normal (outward), which opposes the ray when the
-        // ray is inside a transmissive object.  Using vtx.N directly for cosV
-        // would yield a negative dot product → clamp to 0 → Fresnel = 1 → p_spec = 1
-        // → kNS = (1-1)·albedo / 0 = 0, killing every interior bounce.
-        const float3 Nf = (devDot(vtx.N, -rayDir) >= 0.0f) ? vtx.N : -vtx.N;
+        // Front-facing normal: always faces the incoming ray.
+        const float3 Nf  = (devDot(vtx.N, -rayDir) >= 0.0f) ? vtx.N : -vtx.N;
+        const float  cosV = devDot(Nf, -rayDir);  // shared by clearcoat + base Fresnel
 
-        // Fresnel — evaluated once, shared by all lobes
-        const float  r0_d  = (1.0f - vtx.ior) / (1.0f + vtx.ior);
-        const float3 F0    = devMix(make_float3(r0_d*r0_d, r0_d*r0_d, r0_d*r0_d),
-                                    vtx.albedo, vtx.metallic);
-        const float  cosV  = devDot(Nf, -rayDir);  // always positive by construction
-        const float3 F     = devFresnel(cosV, F0);
+        // ── Clearcoat Fresnel (fixed IOR 1.5 → F0 = 0.04) ────────────────────
+        const float  cc_alpha = fmaxf(vtx.clearcoatRoughness * vtx.clearcoatRoughness, 1e-3f);
+        const float3 cc_F     = devFresnel(cosV, make_float3(0.04f, 0.04f, 0.04f));
+        const float  p_coat   = vtx.clearcoat * devLuminance(cc_F);
 
-        // Specular probability — metals always specular
-        const float p_spec = devClamp01((1.0f - vtx.metallic) * devLuminance(F) + vtx.metallic);
-
-        if (rnd(seed) < p_spec)
+        if (p_coat > 0.0f && rnd(seed) < p_coat)
         {
-            // ── 1. Specular reflection (GGX-VNDF) ────────────────────────────
-            float3 T, B;
-            buildONB(Nf, T, B);
+            // ── Clearcoat specular (GGX-VNDF) ────────────────────────────────
+            float3 Tc, Bc;
+            buildONB(Nf, Tc, Bc);
+            const float3 Vc       = -rayDir;
+            const float3 Vc_local = make_float3(
+                devDot(Vc, Tc), devDot(Vc, Bc), fmaxf(1e-4f, devDot(Vc, Nf)));
+            const float3 Hc_local = devSampleGGX_VNDF(Vc_local, cc_alpha, rnd(seed), rnd(seed));
+            const float3 Hc       = devNormalize(Tc * Hc_local.x + Bc * Hc_local.y + Nf * Hc_local.z);
+            const float3 Lc       = devReflect(rayDir, Hc);
 
-            const float3 V       = -rayDir;
-            const float3 V_local = make_float3(
-                devDot(V, T), devDot(V, B), fmaxf(1e-4f, devDot(V, Nf)));
+            if (devDot(Lc, Nf) <= 0.0f) break;
 
-            const float3 H_local = devSampleGGX_VNDF(V_local, alpha, rnd(seed), rnd(seed));
-            const float3 H       = devNormalize(T * H_local.x + B * H_local.y + Nf * H_local.z);
-            const float3 L       = devReflect(rayDir, H);
-
-            if (devDot(L, Nf) <= 0.0f) break;
-
-            // Weight = F * G1(L) / p_spec  (G1(V) cancels with the VNDF PDF)
-            const float cosNL = fmaxf(1e-4f, devDot(Nf, L));
-            throughput *= F * (devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec));
-            rayDir  = L;
+            const float cosNLc = fmaxf(1e-4f, devDot(Nf, Lc));
+            throughput *= cc_F * vtx.clearcoat
+                        * devSmithG1(cosNLc, cc_alpha)
+                        / fmaxf(1e-4f, p_coat);
+            rayDir  = Lc;
             rayOrig = vtx.pos + Nf * 1e-3f;
         }
         else
         {
-            // Non-specular weight — identical for both sub-lobes
-            const float3 kNS = (make_float3(1.0f, 1.0f, 1.0f) - F) * vtx.albedo
-                               * (1.0f / fmaxf(1e-4f, 1.0f - p_spec));
-            throughput *= kNS;
+            // ── Base material (attenuated by clearcoat transmission) ──────────
+            throughput *= (make_float3(1.0f, 1.0f, 1.0f) - cc_F * vtx.clearcoat)
+                        / fmaxf(1e-6f, 1.0f - p_coat);
 
-            const float p_trans = devClamp01(vtx.transmission);
+            // Base Fresnel — shared by specular + non-specular lobes
+            const float  r0_d  = (1.0f - vtx.ior) / (1.0f + vtx.ior);
+            const float3 F0    = devMix(make_float3(r0_d*r0_d, r0_d*r0_d, r0_d*r0_d),
+                                        vtx.albedo, vtx.metallic);
+            const float3 F     = devFresnel(cosV, F0);
 
-            if (rnd(seed) > p_trans)
+            // Specular probability — metals always specular
+            const float p_spec = devClamp01((1.0f - vtx.metallic) * devLuminance(F) + vtx.metallic);
+
+            if (rnd(seed) < p_spec)
             {
-                // ── 2. Diffuse (Lambertian, cosine-weighted) ──────────────────
+                // ── 1. Specular reflection (GGX-VNDF) ─────────────────────────
                 float3 T, B;
                 buildONB(Nf, T, B);
-                const float3 d = cosineSampleHemisphere(rnd(seed), rnd(seed));
-                rayDir  = devNormalize(T * d.x + B * d.y + Nf * d.z);
+
+                const float3 V       = -rayDir;
+                const float3 V_local = make_float3(
+                    devDot(V, T), devDot(V, B), fmaxf(1e-4f, devDot(V, Nf)));
+
+                const float3 H_local = devSampleGGX_VNDF(V_local, alpha, rnd(seed), rnd(seed));
+                const float3 H       = devNormalize(T * H_local.x + B * H_local.y + Nf * H_local.z);
+                const float3 L       = devReflect(rayDir, H);
+
+                if (devDot(L, Nf) <= 0.0f) break;
+
+                const float cosNL = fmaxf(1e-4f, devDot(Nf, L));
+                throughput *= F * (devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec));
+                rayDir  = L;
                 rayOrig = vtx.pos + Nf * 1e-3f;
             }
             else
             {
+                // Non-specular weight — identical for diffuse and refraction sub-lobes
+                const float3 kNS = (make_float3(1.0f, 1.0f, 1.0f) - F) * vtx.albedo
+                                   * (1.0f / fmaxf(1e-4f, 1.0f - p_spec));
+                throughput *= kNS;
+
+                const float p_trans = devClamp01(vtx.transmission);
+
+                if (rnd(seed) > p_trans)
+                {
+                    // ── 2. Diffuse (Lambertian, cosine-weighted) ───────────────
+                    float3 T, B;
+                    buildONB(Nf, T, B);
+                    const float3 d = cosineSampleHemisphere(rnd(seed), rnd(seed));
+                    rayDir  = devNormalize(T * d.x + B * d.y + Nf * d.z);
+                    rayOrig = vtx.pos + Nf * 1e-3f;
+                }
+                else
+                {
                 // ── 3. Refraction (rough Snell's law via GGX microfacet) ─────────
                 // vtx.N is the true outward geometry normal — used only for the
                 // entering/exiting test, not for the microfacet direction.
@@ -484,8 +513,9 @@ extern "C" __global__ void __raygen__renderFrame()
                 // On TIR devRefract writes the reflected direction; offset stays on
                 // the same side.  On true refraction offset to the far side.
                 rayOrig = vtx.pos + faceN * (refracted ? -1e-3f : 1e-3f);
-            }
-        }
+                }   // end refraction else
+            }   // end non-specular else (diffuse / refraction)
+        }   // end base material else (specular / diffuse / refraction) = clearcoat else
 
         // Russian roulette: stochastically terminate dim paths (all branches)
         if (bounce >= 3)
@@ -573,6 +603,8 @@ extern "C" __global__ void __closesthit__radiance()
         vtx->transmission       = mat.transmission;
         vtx->ior                = mat.ior;
         vtx->absorptionDistance = fmaxf(mat.absorptionDistance, 1e-4f);
+        vtx->clearcoat          = mat.clearcoat;
+        vtx->clearcoatRoughness = mat.clearcoatRoughness;
     }
     else
     {
@@ -583,6 +615,8 @@ extern "C" __global__ void __closesthit__radiance()
         vtx->transmission       = 0.0f;
         vtx->ior                = 1.5f;
         vtx->absorptionDistance = 1.0f;
+        vtx->clearcoat          = 0.0f;
+        vtx->clearcoatRoughness = 0.0f;
     }
 
     vtx->hit = 1;

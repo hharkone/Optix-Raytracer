@@ -1415,6 +1415,14 @@ bool Application::tick()
                 {
                     anyMatChanged = true;
                 }
+                if (ImGui::SliderFloat("Clearcoat",      &mats[i].clearcoat,          0.0f, 1.0f, "%.3f"))
+                {
+                    anyMatChanged = true;
+                }
+                if (ImGui::SliderFloat("Coat Roughness", &mats[i].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
+                {
+                    anyMatChanged = true;
+                }
             }
 
             ImGui::PopID();
@@ -1546,6 +1554,14 @@ bool Application::tick()
                     }
                     if (ImGui::DragFloat("Absorption Dist.", &mats[matIdx].absorptionDistance,
                                          0.01f, 0.001f, 1000.0f, "%.3f"))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::SliderFloat("Clearcoat",      &mats[matIdx].clearcoat,          0.0f, 1.0f, "%.3f"))
+                    {
+                        anyChanged = true;
+                    }
+                    if (ImGui::SliderFloat("Coat Roughness", &mats[matIdx].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
                     {
                         anyChanged = true;
                     }

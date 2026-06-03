@@ -413,6 +413,18 @@ static MaterialData buildMaterial(
         mat.ior = static_cast<float>(
             iorIt->second.Get("ior").GetNumberAsDouble());
 
+    // KHR_materials_clearcoat
+    auto ccIt = gltfMat.extensions.find("KHR_materials_clearcoat");
+    if (ccIt != gltfMat.extensions.end())
+    {
+        if (ccIt->second.Has("clearcoatFactor"))
+            mat.clearcoat = static_cast<float>(
+                ccIt->second.Get("clearcoatFactor").GetNumberAsDouble());
+        if (ccIt->second.Has("clearcoatRoughnessFactor"))
+            mat.clearcoatRoughness = static_cast<float>(
+                ccIt->second.Get("clearcoatRoughnessFactor").GetNumberAsDouble());
+    }
+
     return mat;
 }
 
