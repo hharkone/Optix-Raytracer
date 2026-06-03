@@ -12,7 +12,7 @@ class Scene;
 
 // Manages the OptiX acceleration structure for a loaded scene:
 //   - one BLAS (bottom-level AS) per mesh, built with compaction
-//   - one TLAS (top-level AS) instancing all BLASes with identity transforms
+//   - one TLAS (top-level AS) instancing all BLASes with node world-space transforms
 //
 // The traversable handle exposed here is stored in LaunchParams and passed to
 // optixLaunch so device programs can call optixTrace() against the geometry.
@@ -30,6 +30,11 @@ public:
     // Build or rebuild from scene geometry. Destroys any previous state first.
     // Throws std::runtime_error on CUDA / OptiX failure.
     void build(OptixDeviceContext ctx, const Scene& scene);
+
+    // Rebuild only the TLAS (instance transforms + IAS) from the current scene
+    // node hierarchy. BLASes and device geometry buffers are reused unchanged.
+    // Much cheaper than full build() — use after live node transform edits.
+    void rebuildTlas(OptixDeviceContext ctx, const Scene& scene);
 
     // Free all device memory and reset to empty state. Safe to call multiple times.
     void destroy();
@@ -75,6 +80,10 @@ private:
         MeshBuffers&       buffers,
         unsigned int       vertexCount,
         unsigned int       triangleCount);
+
+    // Frees old TLAS resources, recomputes world transforms from the scene node
+    // hierarchy, then rebuilds the TLAS. Called by both build() and rebuildTlas().
+    void buildTlasPhase(OptixDeviceContext ctx, const Scene& scene);
 };
 
 #endif // OPTIX_RAYTRACER_ACCEL_H

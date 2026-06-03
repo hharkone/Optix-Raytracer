@@ -66,6 +66,7 @@ private:
     void loadScene(const std::string& path);
     void loadEnvMap(const std::string& path);
     void uploadMaterials();  // (re)upload host materials to the GPU buffer
+    void rebuildTlas();      // rebuild TLAS from current scene node transforms
     void initDenoiser();     // create OptixDenoiser; called once after initOptix()
 
     static void optixLogCallback(unsigned int level,

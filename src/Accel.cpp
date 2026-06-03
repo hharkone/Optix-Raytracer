@@ -211,10 +211,36 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
                   static_cast<unsigned int>(mesh.indices.size()));
     }
 
+    buildTlasPhase(ctx, scene);
+}
+
+// ─── Accel::buildTlasPhase ────────────────────────────────────────────────────
+
+void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
+{
+    // Free any existing TLAS resources — safe to call repeatedly
+    if (m_tlasOutputBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_tlasOutputBuffer));
+        m_tlasOutputBuffer = 0;
+    }
+    if (m_instanceBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_instanceBuffer));
+        m_instanceBuffer = 0;
+    }
+    m_tlas = 0;
+
+    const auto& meshes = scene.meshes();
+    if (meshes.empty())
+    {
+        return;
+    }
+
     // ── World-space transforms from node hierarchy ────────────────────────────
     // Walk the Node3D tree and accumulate parent-to-world matrices.
     // Each MeshNode writes its world transform to the meshes it references.
-    // Meshes not reachable from any node (e.g. scene with no hierarchy) keep identity.
+    // Meshes not reachable from any node keep identity.
     std::vector<Matrix4x4> meshWorld(meshes.size(), mat4Identity());
 
     if (!scene.rootNodes().empty())
@@ -268,7 +294,7 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
         inst.transform[10] = w.m[2][2];  inst.transform[11] = w.m[2][3];
 
         inst.instanceId        = static_cast<unsigned int>(i);
-        inst.sbtOffset         = static_cast<unsigned int>(i);  // one hit record per mesh
+        inst.sbtOffset         = static_cast<unsigned int>(i);
         inst.visibilityMask    = 0xFF;
         inst.flags             = OPTIX_INSTANCE_FLAG_NONE;
         inst.traversableHandle = m_meshBuffers[i].blas;
@@ -309,4 +335,15 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cudaFree(reinterpret_cast<void*>(tlasTempBuffer));
+}
+
+// ─── Accel::rebuildTlas ───────────────────────────────────────────────────────
+
+void Accel::rebuildTlas(OptixDeviceContext ctx, const Scene& scene)
+{
+    if (m_meshBuffers.empty())
+    {
+        return;  // no BLASes built yet — nothing to instance
+    }
+    buildTlasPhase(ctx, scene);
 }

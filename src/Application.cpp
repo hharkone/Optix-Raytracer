@@ -619,6 +619,25 @@ void Application::resizeFramebuffer(int w, int h)
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+// ─── TLAS rebuild ────────────────────────────────────────────────────────────
+
+void Application::rebuildTlas()
+{
+    if (!m_accel || !m_accel->valid())
+    {
+        return;
+    }
+    try
+    {
+        m_accel->rebuildTlas(m_optixContext, *m_scene);
+    }
+    catch (const std::exception& e)
+    {
+        m_loadError = std::string("TLAS rebuild failed: ") + e.what();
+    }
+    m_accumDirty = true;
+}
+
 // ─── Material upload ─────────────────────────────────────────────────────────
 
 void Application::uploadMaterials()
@@ -1433,14 +1452,23 @@ bool Application::tick()
         // ── Local transform (4×4 matrix, row by row) ──────────────────────────
         if (ImGui::CollapsingHeader("Local Transform"))
         {
+            bool transformChanged = false;
             ImGui::PushItemWidth(-1.0f);
             for (int row = 0; row < 4; ++row)
             {
                 ImGui::PushID(row);
-                ImGui::DragFloat4("", node.localTransform.m[row], 0.01f);
+                if (ImGui::DragFloat4("", node.localTransform.m[row], 0.01f))
+                {
+                    transformChanged = true;
+                }
                 ImGui::PopID();
             }
             ImGui::PopItemWidth();
+
+            if (transformChanged)
+            {
+                rebuildTlas();
+            }
         }
 
         // ── Type-specific content ─────────────────────────────────────────────
