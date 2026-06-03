@@ -1,13 +1,16 @@
 ﻿// Accel.cpp — OptiX acceleration structure builder.
 //
 // Builds one BLAS per mesh (with compaction) and one TLAS instancing all
-// BLASes with identity transforms. The compacted BLAS output buffers and TLAS
+// BLASes with world-space transforms derived from the scene node hierarchy. The compacted BLAS output buffers and TLAS
 // output buffer are kept alive in MeshBuffers / m_tlasOutputBuffer so OptiX
 // can continue to traverse them during rendering.
 #include "Accel.h"
+#include "Math.h"
+#include "Node3D.h"
 #include "Scene.h"
 
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -208,7 +211,45 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
                   static_cast<unsigned int>(mesh.indices.size()));
     }
 
-    // ── TLAS — one instance per mesh, identity transforms ─────────────────────
+    // ── World-space transforms from node hierarchy ────────────────────────────
+    // Walk the Node3D tree and accumulate parent-to-world matrices.
+    // Each MeshNode writes its world transform to the meshes it references.
+    // Meshes not reachable from any node (e.g. scene with no hierarchy) keep identity.
+    std::vector<Matrix4x4> meshWorld(meshes.size(), mat4Identity());
+
+    if (!scene.rootNodes().empty())
+    {
+        std::function<void(int, const Matrix4x4&)> walkNode =
+            [&](int nodeIdx, const Matrix4x4& parentWorld)
+        {
+            const Node3D& node    = *scene.nodes()[nodeIdx];
+            const Matrix4x4 world = mat4Multiply(parentWorld, node.localTransform);
+
+            if (const MeshNode* mn = dynamic_cast<const MeshNode*>(&node))
+            {
+                for (int mi : mn->meshIndices)
+                {
+                    if (mi >= 0 && mi < static_cast<int>(meshWorld.size()))
+                    {
+                        meshWorld[mi] = world;
+                    }
+                }
+            }
+
+            for (int childIdx : node.children)
+            {
+                walkNode(childIdx, world);
+            }
+        };
+
+        const Matrix4x4 identity = mat4Identity();
+        for (int rootIdx : scene.rootNodes())
+        {
+            walkNode(rootIdx, identity);
+        }
+    }
+
+    // ── TLAS — one instance per mesh with world-space node transform ──────────
     std::vector<OptixInstance> instances(meshes.size());
 
     for (size_t i = 0; i < meshes.size(); ++i)
@@ -216,10 +257,15 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
         OptixInstance& inst = instances[i];
         std::memset(&inst, 0, sizeof(inst));
 
-        // Row-major 3×4 identity transform (last row [0,0,0,1] is implicit)
-        inst.transform[0]  = 1.0f;
-        inst.transform[5]  = 1.0f;
-        inst.transform[10] = 1.0f;
+        // OptiX instance transform = row-major 3×4 (last row [0,0,0,1] implicit).
+        // Our Matrix4x4 is also row-major, so rows 0–2 copy directly.
+        const Matrix4x4& w = meshWorld[i];
+        inst.transform[0]  = w.m[0][0];  inst.transform[1]  = w.m[0][1];
+        inst.transform[2]  = w.m[0][2];  inst.transform[3]  = w.m[0][3];
+        inst.transform[4]  = w.m[1][0];  inst.transform[5]  = w.m[1][1];
+        inst.transform[6]  = w.m[1][2];  inst.transform[7]  = w.m[1][3];
+        inst.transform[8]  = w.m[2][0];  inst.transform[9]  = w.m[2][1];
+        inst.transform[10] = w.m[2][2];  inst.transform[11] = w.m[2][3];
 
         inst.instanceId        = static_cast<unsigned int>(i);
         inst.sbtOffset         = static_cast<unsigned int>(i);  // one hit record per mesh
