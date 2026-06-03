@@ -65,6 +65,8 @@ private:
 
     void loadScene(const std::string& path);
     void loadEnvMap(const std::string& path);
+    void buildEnvMapCdf();   // build 2D luminance CDF from m_envMap and upload to device
+    void freeEnvMapCdf();    // free CDF device buffers and null the LaunchParams pointers
     void uploadMaterials();  // (re)upload host materials to the GPU buffer
     void rebuildTlas();      // rebuild TLAS from current scene node transforms
     void initDenoiser();     // create OptixDenoiser; called once after initOptix()
@@ -75,11 +77,12 @@ private:
                                  void*        cbdata);
 
     // OptiX pipeline (built once at startup)
-    OptixModule       m_module      = nullptr;
-    OptixProgramGroup m_pgRaygen    = nullptr;
-    OptixProgramGroup m_pgMiss      = nullptr;
-    OptixProgramGroup m_pgHitgroup  = nullptr;
-    OptixPipeline     m_pipeline    = nullptr;
+    OptixModule       m_module        = nullptr;
+    OptixProgramGroup m_pgRaygen      = nullptr;
+    OptixProgramGroup m_pgMiss        = nullptr;  // miss index 0 — radiance
+    OptixProgramGroup m_pgMissShadow  = nullptr;  // miss index 1 — NEE shadow visibility
+    OptixProgramGroup m_pgHitgroup    = nullptr;
+    OptixPipeline     m_pipeline      = nullptr;
 
     // Shader binding table (rebuilt whenever the scene changes)
     CUdeviceptr             m_sbtRaygenBuffer   = 0;
@@ -124,6 +127,10 @@ private:
     std::string m_envMapError;      // non-empty = last load failed
     float       m_envMapRotation = 0.0f;  // azimuth offset in radians (Shift+RMB drag)
     float       m_envExposure   = 0.0f;  // EV stops (0 = no change; applied as 2^n)
+
+    // HDRI importance-sampling CDF buffers (device memory; 0 = not built)
+    CUdeviceptr m_envMarginalCdfBuffer    = 0;  // float[H]
+    CUdeviceptr m_envConditionalCdfBuffer = 0;  // float[H * W]
 
     // Hot-reload state
     std::string                      m_ptxDir;

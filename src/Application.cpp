@@ -109,6 +109,7 @@ Application::~Application()
     }
 
     freeTexture(m_envMap);
+    freeEnvMapCdf();
 
     if (m_accumBuffer)
     {
@@ -138,11 +139,12 @@ Application::~Application()
     if (m_denoiserScratch)   { cudaFree(reinterpret_cast<void*>(m_denoiserScratch));   m_denoiserScratch   = 0; }
     delete[] h_hdrBuffer;    h_hdrBuffer = nullptr;
 
-    if (m_pipeline)   { optixPipelineDestroy(m_pipeline);       m_pipeline   = nullptr; }
-    if (m_pgHitgroup) { optixProgramGroupDestroy(m_pgHitgroup); m_pgHitgroup = nullptr; }
-    if (m_pgMiss)     { optixProgramGroupDestroy(m_pgMiss);     m_pgMiss     = nullptr; }
-    if (m_pgRaygen)   { optixProgramGroupDestroy(m_pgRaygen);   m_pgRaygen   = nullptr; }
-    if (m_module)     { optixModuleDestroy(m_module);           m_module     = nullptr; }
+    if (m_pipeline)      { optixPipelineDestroy(m_pipeline);           m_pipeline      = nullptr; }
+    if (m_pgHitgroup)   { optixProgramGroupDestroy(m_pgHitgroup);    m_pgHitgroup    = nullptr; }
+    if (m_pgMissShadow) { optixProgramGroupDestroy(m_pgMissShadow);  m_pgMissShadow  = nullptr; }
+    if (m_pgMiss)       { optixProgramGroupDestroy(m_pgMiss);        m_pgMiss        = nullptr; }
+    if (m_pgRaygen)     { optixProgramGroupDestroy(m_pgRaygen);      m_pgRaygen      = nullptr; }
+    if (m_module)       { optixModuleDestroy(m_module);              m_module        = nullptr; }
 
     if (m_optixContext)
     {
@@ -352,6 +354,13 @@ void Application::buildPipeline(const std::string& ptxDir)
     OPTIX_CHECK(optixProgramGroupCreate(
         m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgMiss));
 
+    pgDesc                         = {};
+    pgDesc.kind                    = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    pgDesc.miss.module              = m_module;
+    pgDesc.miss.entryFunctionName   = "__miss__shadow";
+    OPTIX_CHECK(optixProgramGroupCreate(
+        m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgMissShadow));
+
     pgDesc                                   = {};
     pgDesc.kind                              = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
     pgDesc.hitgroup.moduleCH                  = m_module;
@@ -364,17 +373,18 @@ void Application::buildPipeline(const std::string& ptxDir)
         m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgHitgroup));
 
     // ── Pipeline ──────────────────────────────────────────────────────────────
-    const OptixProgramGroup pgs[] = { m_pgRaygen, m_pgMiss, m_pgHitgroup };
+    const OptixProgramGroup pgs[] = {
+        m_pgRaygen, m_pgMiss, m_pgMissShadow, m_pgHitgroup };
 
     OptixPipelineLinkOptions linkOpts = {};
-    // Depth 1: the raygen calls optixTrace in a loop — no CH/miss ever calls
-    // optixTrace, so the trace chain never exceeds depth 1.
+    // Depth 1: path rays and NEE shadow rays are both called from raygen —
+    // no CH/miss ever calls optixTrace, so the chain never exceeds depth 1.
     linkOpts.maxTraceDepth = 1;
 
     OPTIX_CHECK(optixPipelineCreate(
         m_optixContext,
         &pipelineOpts, &linkOpts,
-        pgs, 3,
+        pgs, 4,
         nullptr, nullptr,
         &m_pipeline));
 
@@ -391,17 +401,19 @@ void Application::reloadPipeline()
 
     // Save the current handles — we restore them if the new PTX fails to compile,
     // which keeps the last working shader running instead of going black.
-    const OptixModule       oldModule     = m_module;
-    const OptixProgramGroup oldPgRaygen   = m_pgRaygen;
-    const OptixProgramGroup oldPgMiss     = m_pgMiss;
-    const OptixProgramGroup oldPgHitgroup = m_pgHitgroup;
-    const OptixPipeline     oldPipeline   = m_pipeline;
+    const OptixModule       oldModule        = m_module;
+    const OptixProgramGroup oldPgRaygen      = m_pgRaygen;
+    const OptixProgramGroup oldPgMiss        = m_pgMiss;
+    const OptixProgramGroup oldPgMissShadow  = m_pgMissShadow;
+    const OptixProgramGroup oldPgHitgroup    = m_pgHitgroup;
+    const OptixPipeline     oldPipeline      = m_pipeline;
 
-    m_module     = nullptr;
-    m_pgRaygen   = nullptr;
-    m_pgMiss     = nullptr;
-    m_pgHitgroup = nullptr;
-    m_pipeline   = nullptr;
+    m_module        = nullptr;
+    m_pgRaygen      = nullptr;
+    m_pgMiss        = nullptr;
+    m_pgMissShadow  = nullptr;
+    m_pgHitgroup    = nullptr;
+    m_pipeline      = nullptr;
 
     try
     {
@@ -409,28 +421,31 @@ void Application::reloadPipeline()
     }
     catch (...)
     {
-        if (m_pipeline)   { optixPipelineDestroy(m_pipeline);       m_pipeline   = nullptr; }
-        if (m_pgHitgroup) { optixProgramGroupDestroy(m_pgHitgroup); m_pgHitgroup = nullptr; }
-        if (m_pgMiss)     { optixProgramGroupDestroy(m_pgMiss);     m_pgMiss     = nullptr; }
-        if (m_pgRaygen)   { optixProgramGroupDestroy(m_pgRaygen);   m_pgRaygen   = nullptr; }
-        if (m_module)     { optixModuleDestroy(m_module);           m_module     = nullptr; }
+        if (m_pipeline)      { optixPipelineDestroy(m_pipeline);          m_pipeline      = nullptr; }
+        if (m_pgHitgroup)    { optixProgramGroupDestroy(m_pgHitgroup);    m_pgHitgroup    = nullptr; }
+        if (m_pgMissShadow)  { optixProgramGroupDestroy(m_pgMissShadow);  m_pgMissShadow  = nullptr; }
+        if (m_pgMiss)        { optixProgramGroupDestroy(m_pgMiss);        m_pgMiss        = nullptr; }
+        if (m_pgRaygen)      { optixProgramGroupDestroy(m_pgRaygen);      m_pgRaygen      = nullptr; }
+        if (m_module)        { optixModuleDestroy(m_module);              m_module        = nullptr; }
 
-        m_module     = oldModule;
-        m_pgRaygen   = oldPgRaygen;
-        m_pgMiss     = oldPgMiss;
-        m_pgHitgroup = oldPgHitgroup;
-        m_pipeline   = oldPipeline;
+        m_module        = oldModule;
+        m_pgRaygen      = oldPgRaygen;
+        m_pgMiss        = oldPgMiss;
+        m_pgMissShadow  = oldPgMissShadow;
+        m_pgHitgroup    = oldPgHitgroup;
+        m_pipeline      = oldPipeline;
         throw;
     }
 
     buildSbt();
     m_accumDirty = true;  // new shader = new result; clear accumulation
 
-    if (oldPipeline)   { optixPipelineDestroy(oldPipeline);       }
-    if (oldPgHitgroup) { optixProgramGroupDestroy(oldPgHitgroup); }
-    if (oldPgMiss)     { optixProgramGroupDestroy(oldPgMiss);     }
-    if (oldPgRaygen)   { optixProgramGroupDestroy(oldPgRaygen);   }
-    if (oldModule)     { optixModuleDestroy(oldModule);           }
+    if (oldPipeline)      { optixPipelineDestroy(oldPipeline);          }
+    if (oldPgHitgroup)    { optixProgramGroupDestroy(oldPgHitgroup);    }
+    if (oldPgMissShadow)  { optixProgramGroupDestroy(oldPgMissShadow);  }
+    if (oldPgMiss)        { optixProgramGroupDestroy(oldPgMiss);        }
+    if (oldPgRaygen)      { optixProgramGroupDestroy(oldPgRaygen);      }
+    if (oldModule)        { optixModuleDestroy(oldModule);              }
 }
 
 void Application::checkShaderHotReload()
@@ -489,12 +504,13 @@ void Application::buildSbt()
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtRaygenBuffer),
                            &raygenRec, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
 
-    // ── Miss record ───────────────────────────────────────────────────────────
-    MissRecord missRec = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(m_pgMiss, &missRec));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtMissBuffer), sizeof(MissRecord)));
+    // ── Miss records — index 0 = radiance, index 1 = NEE shadow ─────────────
+    MissRecord missRecs[2] = {};
+    OPTIX_CHECK(optixSbtRecordPackHeader(m_pgMiss,       &missRecs[0]));
+    OPTIX_CHECK(optixSbtRecordPackHeader(m_pgMissShadow, &missRecs[1]));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtMissBuffer), sizeof(missRecs)));
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtMissBuffer),
-                           &missRec, sizeof(MissRecord), cudaMemcpyHostToDevice));
+                           missRecs, sizeof(missRecs), cudaMemcpyHostToDevice));
 
     // ── Hit group records — one per mesh ──────────────────────────────────────
     const auto& meshes = m_scene->meshes();
@@ -528,7 +544,7 @@ void Application::buildSbt()
 
     m_sbt.missRecordBase              = m_sbtMissBuffer;
     m_sbt.missRecordStrideInBytes     = sizeof(MissRecord);
-    m_sbt.missRecordCount             = 1;
+    m_sbt.missRecordCount             = 2;  // [0]=radiance, [1]=shadow
 
     m_sbt.hitgroupRecordBase          = m_sbtHitgroupBuffer;
     m_sbt.hitgroupRecordStrideInBytes = sizeof(HitGroupRecord);
@@ -725,15 +741,122 @@ void Application::loadScene(const std::string& path)
 void Application::loadEnvMap(const std::string& path)
 {
     m_envMapError.clear();
+    freeEnvMapCdf();       // release old CDF buffers before the texture
     freeTexture(m_envMap);
     m_envMapPath.clear();
 
     if (loadEXR(path, m_envMap, m_envMapError))
     {
         uploadToGpu(m_envMap);
+        buildEnvMapCdf();
         m_envMapPath = std::filesystem::path(path).filename().string();
         m_accumDirty = true;  // new env map = new lighting; clear accumulated samples
     }
+}
+
+// ─── HDRI importance-sampling CDF ────────────────────────────────────────────
+
+void Application::freeEnvMapCdf()
+{
+    if (m_envMarginalCdfBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_envMarginalCdfBuffer));
+        m_envMarginalCdfBuffer = 0;
+    }
+    if (m_envConditionalCdfBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_envConditionalCdfBuffer));
+        m_envConditionalCdfBuffer = 0;
+    }
+    m_launchParams.envMarginalCdf    = nullptr;
+    m_launchParams.envConditionalCdf = nullptr;
+    m_launchParams.envCdfW           = 0;
+    m_launchParams.envCdfH           = 0;
+}
+
+void Application::buildEnvMapCdf()
+{
+    if (!m_envMap.isHdr() || m_envMap.pixels.empty())
+        return;
+
+    const int   W       = m_envMap.width;
+    const int   H       = m_envMap.height;
+    const float* src    = m_envMap.floatPixels();  // RGBA32F, row-major
+    const float  kInvPi = 0.31830988618f;
+
+    // ── Per-pixel weight = luminance(RGB) × sin(θ) ───────────────────────────
+    std::vector<float> weights(static_cast<size_t>(H) * W);
+    std::vector<float> rowSums(H, 0.f);
+
+    for (int j = 0; j < H; ++j)
+    {
+        const float theta    = (j + 0.5f) / static_cast<float>(H) * 3.14159265358979f;
+        const float sinTheta = sinf(theta);
+
+        for (int i = 0; i < W; ++i)
+        {
+            const float* p = src + (j * W + i) * 4;
+            const float  lum = 0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2];
+            const float  w   = fmaxf(0.f, lum) * sinTheta;
+            weights[j * W + i] = w;
+            rowSums[j] += w;
+        }
+    }
+
+    // ── Conditional CDF per row (prefix-sum, normalised to [0,1]) ────────────
+    std::vector<float> conditionalCdf(static_cast<size_t>(H) * W);
+
+    for (int j = 0; j < H; ++j)
+    {
+        const float invRow = (rowSums[j] > 0.f) ? 1.f / rowSums[j] : 0.f;
+        float running = 0.f;
+        for (int i = 0; i < W; ++i)
+        {
+            running += weights[j * W + i];
+            conditionalCdf[j * W + i] = (rowSums[j] > 0.f)
+                ? running * invRow
+                : (i + 1.f) / static_cast<float>(W);
+        }
+        // Force last entry to exactly 1 to prevent binary-search overrun
+        conditionalCdf[j * W + (W - 1)] = 1.f;
+    }
+
+    // ── Marginal CDF (prefix-sum over rows, normalised to [0,1]) ─────────────
+    std::vector<float> marginalCdf(H);
+    float totalWeight = 0.f;
+    for (int j = 0; j < H; ++j)
+        totalWeight += rowSums[j];
+
+    {
+        float running = 0.f;
+        for (int j = 0; j < H; ++j)
+        {
+            running += rowSums[j];
+            marginalCdf[j] = (totalWeight > 0.f)
+                ? running / totalWeight
+                : (j + 1.f) / static_cast<float>(H);
+        }
+        marginalCdf[H - 1] = 1.f;  // force last entry exactly to 1
+    }
+
+    // ── Upload to device ──────────────────────────────────────────────────────
+    freeEnvMapCdf();  // release any old buffers first
+
+    const size_t marginalBytes    = static_cast<size_t>(H) * sizeof(float);
+    const size_t conditionalBytes = static_cast<size_t>(H) * W * sizeof(float);
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envMarginalCdfBuffer),    marginalBytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envConditionalCdfBuffer), conditionalBytes));
+
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envMarginalCdfBuffer),
+                           marginalCdf.data(),    marginalBytes,    cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envConditionalCdfBuffer),
+                           conditionalCdf.data(), conditionalBytes, cudaMemcpyHostToDevice));
+
+    m_launchParams.envMarginalCdf    = reinterpret_cast<const float*>(m_envMarginalCdfBuffer);
+    m_launchParams.envConditionalCdf = reinterpret_cast<const float*>(m_envConditionalCdfBuffer);
+    m_launchParams.envCdfW           = W;
+    m_launchParams.envCdfH           = H;
 }
 
 // ─── Camera controller ───────────────────────────────────────────────────────
@@ -1010,9 +1133,15 @@ bool Application::tick()
         m_launchParams.colorBuffer    = d_colorBuffer;
         m_launchParams.fbSize         = make_uint2(static_cast<unsigned int>(m_viewportWidth), static_cast<unsigned int>(m_viewportHeight));
         m_launchParams.traversable    = (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
-        m_launchParams.envMap         = m_envMap.gpuTex;
-        m_launchParams.envMapRotation = m_envMapRotation;
-        m_launchParams.envExposure    = m_envExposure;
+        m_launchParams.envMap            = m_envMap.gpuTex;
+        m_launchParams.envMapRotation    = m_envMapRotation;
+        m_launchParams.envExposure       = m_envExposure;
+        m_launchParams.envMarginalCdf    = m_envMarginalCdfBuffer
+            ? reinterpret_cast<const float*>(m_envMarginalCdfBuffer)    : nullptr;
+        m_launchParams.envConditionalCdf = m_envConditionalCdfBuffer
+            ? reinterpret_cast<const float*>(m_envConditionalCdfBuffer) : nullptr;
+        m_launchParams.envCdfW           = m_envMap.width;
+        m_launchParams.envCdfH           = m_envMap.height;
         m_launchParams.accumBuffer    = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
         m_launchParams.sampleIndex    = m_sampleCount;
         m_launchParams.materials      = m_materialsBuffer ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
@@ -1246,9 +1375,11 @@ bool Application::tick()
         ImGui::SameLine();
         if (ImGui::Button("Clear EXR"))
         {
+            freeEnvMapCdf();
             freeTexture(m_envMap);
             m_envMapPath.clear();
             m_envMapError.clear();
+            m_accumDirty = true;
         }
     }
 

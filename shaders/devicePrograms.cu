@@ -224,6 +224,90 @@ float3 sampleBackground(float3 dir)
                   devClamp01(dir.y)) * exposure;
 }
 
+// ─── HDRI importance-sampling helpers ────────────────────────────────────────
+
+// Binary search: first index in cdf[0..n-1] where cdf[idx] >= u.
+static __forceinline__ __device__
+int upperBound(const float* cdf, int n, float u)
+{
+    int lo = 0, hi = n - 1;
+    while (lo < hi)
+    {
+        const int mid = (lo + hi) >> 1;
+        if (cdf[mid] < u) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+}
+
+// Sample the env map by importance.
+// r1, r2: uniform [0,1).  Writes the sampled world-space direction to outDir
+// and its solid-angle PDF to outPdf.  Returns the HDR radiance at that direction.
+static __forceinline__ __device__
+float3 sampleEnvMapIS(float r1, float r2, float3& outDir, float& outPdf)
+{
+    const int    W           = optixLaunchParams.envCdfW;
+    const int    H           = optixLaunchParams.envCdfH;
+    const float* marginal    = optixLaunchParams.envMarginalCdf;
+    const float* conditional = optixLaunchParams.envConditionalCdf;
+
+    // Sample row j, then column i
+    const int j = upperBound(marginal,          H, r1);
+    const int i = upperBound(conditional + j*W, W, r2);
+
+    // Continuous UV at texel centre
+    const float u = (i + 0.5f) / static_cast<float>(W);
+    const float v = (j + 0.5f) / static_cast<float>(H);
+
+    // UV → spherical: undo the envMapRotation sampleBackground would apply
+    const float theta    = v * 3.14159265358979f;
+    const float phiWorld = (u - 0.5f) * 6.28318530717959f - optixLaunchParams.envMapRotation;
+    const float sinT     = sinf(theta);
+    outDir = make_float3(sinf(phiWorld) * sinT, cosf(theta), -cosf(phiWorld) * sinT);
+
+    // PDF in solid-angle measure
+    const float mPrev = (j > 0) ? marginal[j - 1]             : 0.0f;
+    const float cPrev = (i > 0) ? conditional[j * W + i - 1] : 0.0f;
+    const float pUV   = (marginal[j] - mPrev) * static_cast<float>(H)
+                      * (conditional[j * W + i] - cPrev) * static_cast<float>(W);
+    outPdf = pUV / fmaxf(1e-5f, 2.0f * 3.14159265358979f * 3.14159265358979f * sinT);
+
+    return sampleBackground(outDir);  // applies exposure + rotation + fallback
+}
+
+// Evaluate the solid-angle PDF for a world-space direction under env map IS.
+// Returns 0 when no CDF is loaded.
+static __forceinline__ __device__
+float evalEnvMapPdf(float3 dir)
+{
+    if (!optixLaunchParams.envMarginalCdf) return 0.0f;
+
+    const int    W           = optixLaunchParams.envCdfW;
+    const int    H           = optixLaunchParams.envCdfH;
+    const float* marginal    = optixLaunchParams.envMarginalCdf;
+    const float* conditional = optixLaunchParams.envConditionalCdf;
+
+    // Direction → (u, v) — mirror exactly what sampleBackground computes
+    const float kInvPi  = 0.31830988618f;
+    const float kInv2Pi = 0.15915494309f;
+    const float theta   = acosf(fmaxf(-1.0f, fminf(1.0f, dir.y)));
+    const float phi     = atan2f(dir.x, -dir.z) + optixLaunchParams.envMapRotation;
+    float u = phi * kInv2Pi + 0.5f;
+    u = u - floorf(u);  // wrap to [0,1]
+    const float v = theta * kInvPi;
+
+    const int i = min(static_cast<int>(u * static_cast<float>(W)), W - 1);
+    const int j = min(static_cast<int>(v * static_cast<float>(H)), H - 1);
+
+    const float mPrev = (j > 0) ? marginal[j - 1]             : 0.0f;
+    const float cPrev = (i > 0) ? conditional[j * W + i - 1] : 0.0f;
+    const float pUV   = (marginal[j] - mPrev) * static_cast<float>(H)
+                      * (conditional[j * W + i] - cPrev) * static_cast<float>(W);
+    const float sinT  = sinf(theta);
+    return (sinT > 1e-5f)
+        ? pUV / (2.0f * 3.14159265358979f * 3.14159265358979f * sinT)
+        : 0.0f;
+}
+
 // ─── Raygen — iterative path loop ────────────────────────────────────────────
 
 extern "C" __global__ void __raygen__renderFrame()
@@ -306,8 +390,11 @@ extern "C" __global__ void __raygen__renderFrame()
         rayDir  = devNormalize(focalPt - rayOrig);
     }
 
-    float3 throughput = make_float3(1.0f, 1.0f, 1.0f);
-    float3 radiance   = make_float3(0.0f, 0.0f, 0.0f);
+    float3 throughput    = make_float3(1.0f, 1.0f, 1.0f);
+    float3 radiance      = make_float3(0.0f, 0.0f, 0.0f);
+    // PDF of the last BSDF-sampled direction (diffuse only); 0 = specular/glass/first ray.
+    // Carried into the next iteration so the miss block can MIS-weight env map samples.
+    float  bsdfPdfForMis = 0.0f;
 
     // Beer-Lambert absorption coefficient: -log(albedo) per unit distance.
     // Zero until a transmissive surface is entered; cleared again on exit.
@@ -349,7 +436,22 @@ extern "C" __global__ void __raygen__renderFrame()
 
         if (!vtx.hit)
         {
-            radiance += throughput * sampleBackground(rayDir);
+            float3 bg = sampleBackground(rayDir);
+            if (optixLaunchParams.envMarginalCdf && bsdfPdfForMis > 0.0f)
+            {
+                // MIS power heuristic: down-weight the BSDF path when the env map
+                // IS would have sampled this direction with a higher density.
+                const float pEnv  = evalEnvMapPdf(rayDir);
+                const float wBsdf = (pEnv > 0.0f)
+                    ? (bsdfPdfForMis * bsdfPdfForMis)
+                      / (bsdfPdfForMis * bsdfPdfForMis + pEnv * pEnv)
+                    : 1.0f;
+                radiance += throughput * bg * wBsdf;
+            }
+            else
+            {
+                radiance += throughput * bg;
+            }
             break;
         }
 
@@ -398,18 +500,20 @@ extern "C" __global__ void __raygen__renderFrame()
 
             if (devDot(Lc, Nf) <= 0.0f) break;
 
+            // cc_F is achromatic (F0 = 0.04 is grey → Schlick stays grey), so
+            // cc_F * clearcoat / p_coat = cc_F * clearcoat / (clearcoat * luminance(cc_F)) = 1.
+            // The probability selection already carries the energy split; only G1 remains.
             const float cosNLc = fmaxf(1e-4f, devDot(Nf, Lc));
-            throughput *= cc_F * vtx.clearcoat
-                        * devSmithG1(cosNLc, cc_alpha)
-                        / fmaxf(1e-4f, p_coat);
-            rayDir  = Lc;
-            rayOrig = vtx.pos + Nf * 1e-3f;
+            throughput *= devSmithG1(cosNLc, cc_alpha);
+            rayDir        = Lc;
+            rayOrig       = vtx.pos + Nf * 1e-3f;
+            bsdfPdfForMis = 0.0f;  // clearcoat specular — MIS not applied on miss
         }
         else
         {
-            // ── Base material (attenuated by clearcoat transmission) ──────────
-            throughput *= (make_float3(1.0f, 1.0f, 1.0f) - cc_F * vtx.clearcoat)
-                        / fmaxf(1e-6f, 1.0f - p_coat);
+            // ── Base material ─────────────────────────────────────────────────
+            // (1 - cc_F * clearcoat) / (1 - p_coat) = 1 for achromatic cc_F,
+            // so no throughput change is needed here either.
 
             // Base Fresnel — shared by specular + non-specular lobes
             const float  r0_d  = (1.0f - vtx.ior) / (1.0f + vtx.ior);
@@ -438,8 +542,9 @@ extern "C" __global__ void __raygen__renderFrame()
 
                 const float cosNL = fmaxf(1e-4f, devDot(Nf, L));
                 throughput *= F * (devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec));
-                rayDir  = L;
-                rayOrig = vtx.pos + Nf * 1e-3f;
+                rayDir        = L;
+                rayOrig       = vtx.pos + Nf * 1e-3f;
+                bsdfPdfForMis = 0.0f;  // GGX specular — no diffuse NEE on miss
             }
             else
             {
@@ -455,12 +560,56 @@ extern "C" __global__ void __raygen__renderFrame()
                     // ── 2. Diffuse (Lambertian, cosine-weighted) ───────────────
                     float3 T, B;
                     buildONB(Nf, T, B);
+
+                    // ── NEE: direct env-map lighting ──────────────────────────
+                    // Sample the env map IS distribution, fire a shadow ray to
+                    // check visibility, and add a MIS-weighted direct contribution.
+                    if (optixLaunchParams.envMarginalCdf)
+                    {
+                        float3 neeDir; float neePdf;
+                        float3 neeL = sampleEnvMapIS(rnd(seed), rnd(seed), neeDir, neePdf);
+
+                        const float cosL = devDot(neeDir, Nf);
+                        if (cosL > 0.0f && neePdf > 0.0f)
+                        {
+                            // Shadow ray: SBT miss index 1 → __miss__shadow sets p0=1
+                            uint32_t vis = 0u, dummy = 0u;
+                            optixTrace(
+                                optixLaunchParams.traversable,
+                                vtx.pos + Nf * 1e-3f, neeDir,
+                                1e-3f, 1e30f, 0.0f,
+                                OptixVisibilityMask(0xFF),
+                                OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
+                                | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+                                0, 1, 1,   // offset=0, stride=1, missIndex=1
+                                vis, dummy);
+
+                            if (vis)
+                            {
+                                // throughput already carries kNS = (1-F)*albedo/(1-p_spec)
+                                // Lambertian: f×cosθ = kNS * (cosθ/π) evaluated at neeDir
+                                const float kInvPi = 0.31830988618f;
+                                const float pBsdf  = (1.0f - p_coat) * (1.0f - p_spec)
+                                                   * (1.0f - p_trans) * cosL * kInvPi;
+                                const float wNee   = (neePdf * neePdf)
+                                                   / (neePdf * neePdf + pBsdf * pBsdf);
+                                radiance += throughput * (cosL * kInvPi / neePdf) * neeL * wNee;
+                            }
+                        }
+                    }
+
+                    // ── Continue: cosine-sample the hemisphere for the path ────
                     const float3 d = cosineSampleHemisphere(rnd(seed), rnd(seed));
                     rayDir  = devNormalize(T * d.x + B * d.y + Nf * d.z);
                     rayOrig = vtx.pos + Nf * 1e-3f;
+
+                    // Store BSDF PDF for MIS in next-iteration miss block
+                    const float kInvPi = 0.31830988618f;
+                    bsdfPdfForMis = devDot(rayDir, Nf) * kInvPi;
                 }
                 else
                 {
+                    bsdfPdfForMis = 0.0f;  // refraction — no diffuse NEE on next hit
                 // ── 3. Refraction (rough Snell's law via GGX microfacet) ─────────
                 // vtx.N is the true outward geometry normal — used only for the
                 // entering/exiting test, not for the microfacet direction.
@@ -565,6 +714,15 @@ extern "C" __global__ void __raygen__renderFrame()
 extern "C" __global__ void __miss__radiance()
 {
     // intentionally empty — hit==0 default in raygen is sufficient
+}
+
+// ─── Miss — NEE shadow ray ────────────────────────────────────────────────────
+// Fires when a shadow ray reaches the background unoccluded.
+// Sets p0 = 1 (visible); the raygen reads this to confirm the light path is clear.
+
+extern "C" __global__ void __miss__shadow()
+{
+    optixSetPayload_0(1u);
 }
 
 // ─── Closest-hit ─────────────────────────────────────────────────────────────

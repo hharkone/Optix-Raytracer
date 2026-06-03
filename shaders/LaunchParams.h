@@ -28,6 +28,14 @@ struct LaunchParams
     float               envMapRotation;  // azimuth offset in radians (Shift+RMB drag)
     float               envExposure;     // exposure in EV stops; applied as 2^n to env radiance
 
+    // HDRI importance-sampling CDFs — null when no env map is loaded.
+    // marginalCdf[j]      = P(row ≤ j), normalised prefix-sum of row energies.
+    // conditionalCdf[j*W+i] = P(col ≤ i | row j), normalised within each row.
+    const float* envMarginalCdf;    // device float[envCdfH]
+    const float* envConditionalCdf; // device float[envCdfH × envCdfW]
+    int          envCdfW;           // env map width  (= CDF column count)
+    int          envCdfH;           // env map height (= CDF row count)
+
     // Thin-lens depth of field. lensRadius = 0 → pinhole (no DoF).
     // lensRadius is in world units (1 unit = 1 m); focusDistance is in world units.
     float lensRadius;     // half aperture = focalLength_mm / (2 × fStop × 1000)
