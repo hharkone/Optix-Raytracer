@@ -25,6 +25,7 @@ struct LaunchParams
     // Equirectangular (lat-long) environment map. 0 = not loaded; raygen falls
     // back to the procedural sky gradient when this is 0.
     cudaTextureObject_t envMap;
+    float               envMapRotation;  // azimuth offset in radians (Shift+RMB drag)
 
     // Per-pixel HDR accumulation buffer (float4, w unused).  The raygen adds
     // one sample per launch; the display value is accumBuffer[i] / sampleIndex.

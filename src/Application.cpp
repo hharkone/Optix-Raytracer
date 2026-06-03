@@ -675,10 +675,18 @@ void Application::updateCamera()
     // rmbFirstFrame is skipped to avoid a position-jump on the first drag frame.
     if (rmb && !rmbFirstFrame && m_viewportHovered)
     {
-        const bool ctrlHeld = glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS
-                           || glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+        const bool shiftHeld = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)   == GLFW_PRESS
+                            || glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT)  == GLFW_PRESS;
+        const bool ctrlHeld  = glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS
+                            || glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
 
-        if (ctrlHeld)
+        if (shiftHeld)
+        {
+            // Rotate environment map azimuthally — same sensitivity as camera rotation
+            m_envMapRotation += dx * m_rotSpeed;
+            m_accumDirty = true;
+        }
+        else if (ctrlHeld)
         {
             // Orbit: move the position along a sphere of the same radius and
             // derive yaw/pitch from the new position so the camera always looks
@@ -912,18 +920,14 @@ bool Application::tick()
             m_accumDirty  = false;
         }
 
-        m_launchParams.colorBuffer   = d_colorBuffer;
-        m_launchParams.fbSize        = make_uint2(
-            static_cast<unsigned int>(m_viewportWidth),
-            static_cast<unsigned int>(m_viewportHeight));
-        m_launchParams.traversable   =
-            (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
-        m_launchParams.envMap        = m_envMap.gpuTex;
-        m_launchParams.accumBuffer   = m_accumBuffer
-            ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
-        m_launchParams.sampleIndex   = m_sampleCount;
-        m_launchParams.materials     = m_materialsBuffer
-            ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
+        m_launchParams.colorBuffer    = d_colorBuffer;
+        m_launchParams.fbSize         = make_uint2(static_cast<unsigned int>(m_viewportWidth), static_cast<unsigned int>(m_viewportHeight));
+        m_launchParams.traversable    = (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
+        m_launchParams.envMap         = m_envMap.gpuTex;
+        m_launchParams.envMapRotation = m_envMapRotation;
+        m_launchParams.accumBuffer    = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
+        m_launchParams.sampleIndex    = m_sampleCount;
+        m_launchParams.materials      = m_materialsBuffer ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
 
         // Camera basis vectors derived from the scene camera each frame
         {
@@ -1196,8 +1200,7 @@ bool Application::tick()
                 {
                     anyMatChanged = true;
                 }
-                if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale,
-                                     0.1f, 0.0f, 1000.0f, "%.2f"))
+                if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale, 0.1f, 0.0f, 1000.0f, "%.2f"))
                 {
                     anyMatChanged = true;
                 }
@@ -1206,6 +1209,10 @@ bool Application::tick()
                     anyMatChanged = true;
                 }
                 if (ImGui::SliderFloat("IOR",          &mats[i].ior,          1.0f, 3.0f, "%.3f"))
+                {
+                    anyMatChanged = true;
+                }
+                if (ImGui::DragFloat("Absorption Dist.", &mats[i].absorptionDistance, 0.002f, 0.0001f, 1000.0f, "%.4f"))
                 {
                     anyMatChanged = true;
                 }
@@ -1329,6 +1336,11 @@ bool Application::tick()
                     {
                         anyChanged = true;
                     }
+                    if (ImGui::DragFloat("Absorption Dist.", &mats[matIdx].absorptionDistance,
+                                         0.01f, 0.001f, 1000.0f, "%.3f"))
+                    {
+                        anyChanged = true;
+                    }
                 }
                 ImGui::PopID();
             }
@@ -1342,11 +1354,19 @@ bool Application::tick()
         else if (dynamic_cast<CameraNode*>(&node))
         {
             ImGui::Separator();
-            const Camera& cam = m_scene->camera();
-            ImGui::Text("FOV:        %.1f deg", cam.yFov * (180.0f / 3.14159265f));
-            ImGui::Text("Aspect:     %.3f",     cam.aspectRatio);
-            ImGui::Text("Near / Far: %.4f / %.1f", cam.zNear, cam.zFar);
-            ImGui::TextDisabled("(camera driven by fly-cam controller)");
+            {
+                Camera cam    = m_scene->camera();  // mutable copy
+                float  fovDeg = cam.yFov * (180.0f / 3.14159265f);
+                if (ImGui::SliderFloat("FOV (deg)", &fovDeg, 1.0f, 170.0f, "%.1f"))
+                {
+                    cam.yFov = fovDeg * (3.14159265f / 180.0f);
+                    m_scene->setCamera(std::move(cam));
+                    m_accumDirty = true;
+                }
+                ImGui::Text("Aspect:     %.3f",       m_scene->camera().aspectRatio);
+                ImGui::Text("Near / Far: %.4f / %.1f", m_scene->camera().zNear, m_scene->camera().zFar);
+                ImGui::TextDisabled("(transform driven by fly-cam controller)");
+            }
         }
     }
 

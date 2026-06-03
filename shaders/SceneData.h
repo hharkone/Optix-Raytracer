@@ -27,8 +27,9 @@ struct MaterialData
     float3 emission      = { 0.0f, 0.0f, 0.0f };
     float  emissionScale = 1.0f;
 
-    float  transmission  = 0.0f;   // 0 = opaque, 1 = fully transmissive
-    float  ior           = 1.5f;  // index of refraction (glass ≈ 1.5)
+    float  transmission      = 0.0f;   // 0 = opaque, 1 = fully transmissive
+    float  ior               = 1.5f;   // index of refraction (glass ≈ 1.5)
+    float  absorptionDistance = 1.0f;  // world-space distance for full albedo absorption
 };
 
 #endif // OPTIX_RAYTRACER_SCENE_DATA_H

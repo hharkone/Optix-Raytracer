@@ -101,9 +101,10 @@ private:
     std::string m_loadError;      // empty = no error
 
     // Environment map (lat-long EXR)
-    Texture     m_envMap;          // RGBA32F; gpuTex == 0 = not loaded
-    std::string m_envMapPath;      // display name
-    std::string m_envMapError;     // non-empty = last load failed
+    Texture     m_envMap;           // RGBA32F; gpuTex == 0 = not loaded
+    std::string m_envMapPath;       // display name
+    std::string m_envMapError;      // non-empty = last load failed
+    float       m_envMapRotation = 0.0f;  // azimuth offset in radians (Shift+RMB drag)
 
     // Hot-reload state
     std::string                      m_ptxDir;

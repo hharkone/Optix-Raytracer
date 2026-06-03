@@ -52,9 +52,10 @@ struct PathVertex
     float3 emission;     // pre-scaled emissive radiance (emission * emissionScale)
     float  roughness;    // perceptual roughness [0, 1]
     float  metallic;     // metallic factor [0, 1]
-    float  transmission; // 0 = opaque, 1 = fully transmissive
-    float  ior;          // index of refraction
-    float  t;            // ray travel distance to this hit (for Beer-Lambert absorption)
+    float  transmission;       // 0 = opaque, 1 = fully transmissive
+    float  ior;               // index of refraction
+    float  absorptionDistance; // world-space units for full albedo absorption (Beer-Lambert scale)
+    float  t;                 // ray travel distance to this hit (for Beer-Lambert absorption)
     int    hit;          // 1 = geometry hit, 0 = ray escaped to background
 };
 
@@ -208,7 +209,7 @@ float3 sampleBackground(float3 dir)
         const float kInvPi  = 0.31830988618f;
         const float kInv2Pi = 0.15915494309f;
         const float theta   = acosf(fmaxf(-1.0f, fminf(1.0f, dir.y)));
-        const float phi     = atan2f(dir.x, -dir.z);
+        const float phi     = atan2f(dir.x, -dir.z) + optixLaunchParams.envMapRotation;
         const float4 s = tex2D<float4>(optixLaunchParams.envMap,
                                        phi * kInv2Pi + 0.5f,
                                        theta * kInvPi);
@@ -420,9 +421,12 @@ extern "C" __global__ void __raygen__renderFrame()
                 {
                     if (entering)
                     {
-                        absorb.x = -logf(fmaxf(vtx.albedo.x, 1e-6f));
-                        absorb.y = -logf(fmaxf(vtx.albedo.y, 1e-6f));
-                        absorb.z = -logf(fmaxf(vtx.albedo.z, 1e-6f));
+                        // σ = -log(albedo) / absorptionDistance
+                        // → exp(-σ·t) = albedo^(t / absorptionDistance)
+                        const float invDist = 1.0f / vtx.absorptionDistance;
+                        absorb.x = -logf(fmaxf(vtx.albedo.x, 1e-6f)) * invDist;
+                        absorb.y = -logf(fmaxf(vtx.albedo.y, 1e-6f)) * invDist;
+                        absorb.z = -logf(fmaxf(vtx.albedo.z, 1e-6f)) * invDist;
                     }
                     else
                     {
@@ -512,17 +516,19 @@ extern "C" __global__ void __closesthit__radiance()
         vtx->roughness     = mat.roughness;
         vtx->metallic      = mat.metallic;
         vtx->emission      = mat.emission * mat.emissionScale;
-        vtx->transmission  = mat.transmission;
-        vtx->ior           = mat.ior;
+        vtx->transmission       = mat.transmission;
+        vtx->ior                = mat.ior;
+        vtx->absorptionDistance = fmaxf(mat.absorptionDistance, 1e-4f);
     }
     else
     {
-        vtx->albedo        = make_float3(0.8f, 0.8f, 0.8f);
-        vtx->roughness     = 0.5f;
-        vtx->metallic      = 0.0f;
-        vtx->emission      = make_float3(0.0f, 0.0f, 0.0f);
-        vtx->transmission  = 0.0f;
-        vtx->ior           = 1.5f;
+        vtx->albedo             = make_float3(0.8f, 0.8f, 0.8f);
+        vtx->roughness          = 0.5f;
+        vtx->metallic           = 0.0f;
+        vtx->emission           = make_float3(0.0f, 0.0f, 0.0f);
+        vtx->transmission       = 0.0f;
+        vtx->ior                = 1.5f;
+        vtx->absorptionDistance = 1.0f;
     }
 
     vtx->hit = 1;
