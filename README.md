@@ -150,8 +150,10 @@ Optix-Raytracer/
 │                               HDRI importance sampling, NEE shadow rays, MIS
 └── src/
     ├── main.cpp                Entry point
-    ├── Application.h/.cpp      Window, CUDA/OptiX init, ImGui UI, per-frame render loop
-    ├── Math.h                  Matrix4x4 + mat4Identity / mat4Multiply / mat4Inverse / col-major converters
+    ├── Application.h/.cpp      CUDA/OptiX init, ImGui UI, per-frame render loop
+    ├── VulkanContext.h/.cpp    Vulkan device, swapchain, render pass, display image,
+    │                           and per-frame present logic (extracted from Application)
+    ├── Math.h                  Matrix4x4 + mat4Identity / mat4Multiply
     ├── Camera.h                Camera struct: transform, FOV, DoF parameters
     ├── Node3D.h                Node3D base + MeshNode, CameraNode, GroupNode
     ├── Scene.h/.cpp            Scene container: meshes, materials, textures, node tree

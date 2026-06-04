@@ -1,17 +1,17 @@
-﻿#ifndef OPTIX_RAYTRACER_APPLICATION_H
+#ifndef OPTIX_RAYTRACER_APPLICATION_H
 #define OPTIX_RAYTRACER_APPLICATION_H
 
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
-// GLFW_INCLUDE_VULKAN lets glfw3.h pull in vulkan.h automatically
-#define GLFW_INCLUDE_VULKAN
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
 #include "Accel.h"
 #include "LaunchParams.h"
 #include "Scene.h"
 #include "Texture.h"
+#include "VulkanContext.h"
 
 #include <imgui.h>       // must precede ImGuizmo.h — it relies on ImGui types
 #include <ImGuizmo.h>
@@ -45,58 +45,16 @@ private:
     std::unique_ptr<Scene> m_scene;
     std::unique_ptr<Accel> m_accel;  // null = no scene loaded or AS not yet built
 
-    // Framebuffer — filled by device programs, displayed via Vulkan image (Phase 3)
+    // Framebuffer — CUDA device/host buffers for the rendered image
     uchar4*      d_colorBuffer   = nullptr;  // CUDA device buffer
     uchar4*      h_colorBuffer   = nullptr;  // host staging buffer
     int          m_viewportWidth  = 0;       // current framebuffer dimensions
     int          m_viewportHeight = 0;       // driven by the Viewport panel size
 
-    // ── Vulkan core ────────────────────────────────────────────────────────────
-    VkInstance               m_vkInstance       = VK_NULL_HANDLE;
-    VkDebugUtilsMessengerEXT m_vkDebugMessenger = VK_NULL_HANDLE;
-    VkPhysicalDevice         m_vkPhysicalDevice = VK_NULL_HANDLE;
-    VkDevice                 m_vkDevice         = VK_NULL_HANDLE;
-    VkQueue                  m_vkQueue          = VK_NULL_HANDLE;
-    uint32_t                 m_vkQueueFamily    = 0;
-    VkSurfaceKHR             m_vkSurface        = VK_NULL_HANDLE;
-
-    // ── Swap chain ─────────────────────────────────────────────────────────────
-    VkSwapchainKHR                m_vkSwapchain     = VK_NULL_HANDLE;
-    std::vector<VkImage>          m_swapchainImages;
-    std::vector<VkImageView>      m_swapchainImageViews;
-    VkFormat                      m_swapchainFormat = VK_FORMAT_UNDEFINED;
-    VkExtent2D                    m_swapchainExtent = {};
-
-    // ── Render pass + framebuffers ─────────────────────────────────────────────
-    VkRenderPass                  m_vkRenderPass = VK_NULL_HANDLE;
-    std::vector<VkFramebuffer>    m_swapchainFramebuffers;
-
-    // ── Commands + sync ────────────────────────────────────────────────────────
-    VkCommandPool                 m_vkCommandPool    = VK_NULL_HANDLE;
-    std::vector<VkCommandBuffer>  m_vkCommandBuffers;
-    VkSemaphore                   m_imageAvailable   = VK_NULL_HANDLE;
-    VkSemaphore                   m_renderFinished   = VK_NULL_HANDLE;
-    VkFence                       m_inFlightFence    = VK_NULL_HANDLE;
-
-    // ── ImGui descriptor pool ──────────────────────────────────────────────────
-    VkDescriptorPool              m_imguiDescPool    = VK_NULL_HANDLE;
-
-    // ── Display image (Phase 3 — CUDA→Vulkan upload) ───────────────────────────
-    VkImage          m_displayImage      = VK_NULL_HANDLE;
-    VkDeviceMemory   m_displayImageMem   = VK_NULL_HANDLE;
-    VkImageView      m_displayImageView  = VK_NULL_HANDLE;
-    VkSampler        m_displaySampler    = VK_NULL_HANDLE;
-    VkDescriptorSet  m_displayDescSet    = VK_NULL_HANDLE;
-    VkBuffer         m_displayStaging    = VK_NULL_HANDLE;
-    VkDeviceMemory   m_displayStagingMem = VK_NULL_HANDLE;
-    void*            m_displayStagingPtr = nullptr;
+    // Vulkan presentation context (owns swapchain, render pass, display image, etc.)
+    VulkanContext m_vkCtx;
 
     void initWindow(const std::string& title);
-    void initVulkan();
-    void createSwapchain(int w, int h);
-    void destroySwapchain();
-    void recreateSwapchain(int w, int h);
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags props) const;
     void initImGui();
     void initCuda();
     void initOptix();
@@ -105,112 +63,107 @@ private:
     void resizeFramebuffer(int w, int h);
 
     // Hot-reload: rebuild the pipeline from the PTX file whenever it changes on disk.
-    // reloadPipeline() swaps in the new pipeline atomically — the old one stays alive
-    // until the new one is confirmed working, so a broken shader never kills the render.
     void reloadPipeline();
     void checkShaderHotReload();
 
     void loadScene(const std::string& path);
     void loadEnvMap(const std::string& path);
-    void buildEnvMapCdf();   // build 2D luminance CDF from m_envMap and store in m_envMap
-    void uploadMaterials();  // (re)upload host materials to the GPU buffer
-    void rebuildTlas();      // rebuild TLAS from current scene node transforms
-    void initDenoiser();     // create OptixDenoiser; called once after initOptix()
+    void buildEnvMapCdf();
+    void uploadMaterials();
+    void rebuildTlas();
+    void initDenoiser();
 
     static void optixLogCallback(unsigned int level,
                                  const char*  tag,
                                  const char*  message,
                                  void*        cbdata);
 
-    // OptiX pipeline (built once at startup)
+    // OptiX pipeline
     OptixModule       m_module        = nullptr;
     OptixProgramGroup m_pgRaygen      = nullptr;
-    OptixProgramGroup m_pgMiss        = nullptr;  // miss index 0 — radiance
-    OptixProgramGroup m_pgMissShadow  = nullptr;  // miss index 1 — NEE shadow visibility
+    OptixProgramGroup m_pgMiss        = nullptr;
+    OptixProgramGroup m_pgMissShadow  = nullptr;
     OptixProgramGroup m_pgHitgroup    = nullptr;
     OptixPipeline     m_pipeline      = nullptr;
 
-    // Shader binding table (rebuilt whenever the scene changes)
+    // Shader binding table
     CUdeviceptr             m_sbtRaygenBuffer   = 0;
     CUdeviceptr             m_sbtMissBuffer     = 0;
     CUdeviceptr             m_sbtHitgroupBuffer = 0;
     OptixShaderBindingTable m_sbt               = {};
 
-    // Scene materials on device (uploaded when a scene is loaded)
+    // Scene materials on device
     CUdeviceptr m_materialsBuffer = 0;
 
-    // Sample accumulation — reset whenever the camera, scene, or env map changes
-    CUdeviceptr m_accumBuffer  = 0;   // float4, width * height
+    // Sample accumulation
+    CUdeviceptr m_accumBuffer  = 0;
     uint32_t    m_sampleCount  = 0;
-    bool        m_accumDirty   = true; // true = clear before the next launch
+    bool        m_accumDirty   = true;
 
-    // OptiX AI denoiser (optional post-process after optixLaunch)
+    // OptiX AI denoiser
     OptixDenoiser m_denoiser            = nullptr;
     CUdeviceptr   m_denoiserState       = 0;
     size_t        m_denoiserStateSize   = 0;
     CUdeviceptr   m_denoiserScratch     = 0;
     size_t        m_denoiserScratchSize = 0;
-    CUdeviceptr   m_denoiserIntensity   = 0;  // single float for intensity computation
-    CUdeviceptr   m_normalBuffer        = 0;  // float4 × W×H — first-hit world normal
-    CUdeviceptr   m_albedoBuffer        = 0;  // float4 × W×H — first-hit material albedo
-    CUdeviceptr   m_hdrBuffer           = 0;  // float4 × W×H — running HDR average
-    CUdeviceptr   m_denoisedBuffer      = 0;  // float4 × W×H — denoiser output
-    float4*       h_hdrBuffer           = nullptr;  // host staging for CPU tone-map
+    CUdeviceptr   m_denoiserIntensity   = 0;
+    CUdeviceptr   m_normalBuffer        = 0;
+    CUdeviceptr   m_albedoBuffer        = 0;
+    CUdeviceptr   m_hdrBuffer           = 0;
+    CUdeviceptr   m_denoisedBuffer      = 0;
+    float4*       h_hdrBuffer           = nullptr;
     bool          m_denoiserEnabled         = false;
-    int           m_denoiserInterval        = 50;    // run denoiser every N samples
-    bool          m_hasValidDenoisedFrame   = false; // false after accum reset until first denoise
+    int           m_denoiserInterval        = 50;
+    bool          m_hasValidDenoisedFrame   = false;
 
-    // Launch parameters — host struct updated each frame, device copy passed to optixLaunch
+    // Launch parameters
     LaunchParams m_launchParams       = {};
     CUdeviceptr  m_launchParamsBuffer = 0;
 
-    std::string m_sceneFilePath;  // empty = no scene loaded
-    std::string m_loadError;      // empty = no error
+    std::string m_sceneFilePath;
+    std::string m_loadError;
 
-    // Environment map (lat-long EXR)
-    Texture     m_envMap;           // RGBA32F; gpuTex == 0 = not loaded
-    std::string m_envMapPath;       // display name
-    std::string m_envMapError;      // non-empty = last load failed
-    float       m_envMapRotation = 0.0f;  // azimuth offset in radians (Shift+RMB drag)
-    float       m_envExposure   = 0.0f;  // EV stops (0 = no change; applied as 2^n)
-
-    // CDF buffers are now owned by m_envMap (Texture::cdfMarginal / cdfConditional)
-    // and freed automatically by freeTexture().
+    // Environment map
+    Texture     m_envMap;
+    std::string m_envMapPath;
+    std::string m_envMapError;
+    float       m_envMapRotation = 0.0f;
+    float       m_envExposure   = 0.0f;
 
     // Hot-reload state
     std::string                      m_ptxDir;
     std::filesystem::file_time_type  m_ptxWriteTime = {};
-    std::string                      m_shaderError;   // non-empty = last reload failed
+    std::string                      m_shaderError;
 
-    // GPU device info — queried once in initCuda()
+    // GPU device info
     std::string   m_deviceName;
     int           m_deviceComputeMajor = 0;
     int           m_deviceComputeMinor = 0;
     std::uint64_t m_deviceMemoryMB     = 0;
 
-    // Frame timing — updated at the top of each tick()
+    // Frame timing
     std::chrono::steady_clock::time_point m_frameStart;
-    float m_frameTimeMs = 0.0f;  // exponential moving average of per-frame duration
+    float m_frameTimeMs = 0.0f;
 
-    // Free-fly camera state — the scene camera matrix is rebuilt from these each frame
+    // Free-fly camera
     float3 m_camPos    = { 0.0f, 0.0f, 3.0f };
-    float  m_camYaw    = 0.0f;     // radians, rotation around world Y; 0 = facing -Z
-    float  m_camPitch  = 0.0f;     // radians, tilt around camera X; positive = look up
-    float  m_moveSpeed = 5.0f;     // world units / second (WASD)
-    float  m_rotSpeed  = 0.003f;  // radians / pixel (RMB drag)
+    float  m_camYaw    = 0.0f;
+    float  m_camPitch  = 0.0f;
+    float  m_moveSpeed = 5.0f;
+    float  m_rotSpeed  = 0.003f;
 
-    // Raw input state carried across frames
+    // Input state
     double m_prevMouseX      = 0.0;
     double m_prevMouseY      = 0.0;
-    bool   m_prevRmb         = false;  // right mouse button state last frame
-    bool   m_viewportHovered  = false;  // ImGui hover flag (set during Viewport panel)
-    int    m_selectedNodeIdx  = -1;     // Scene Graph selection; -1 = nothing selected
+    bool   m_prevRmb         = false;
+    bool   m_viewportHovered  = false;
+    int    m_selectedNodeIdx  = -1;
 
-    // 3D gizmo (ImGuizmo) state
+    // 3D gizmo
     ImGuizmo::OPERATION m_gizmoOp   = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE      m_gizmoMode = ImGuizmo::LOCAL;
 
-    void updateCamera();  // process input, rebuild scene camera matrix
+    void updateCamera();
 };
 
 #endif // OPTIX_RAYTRACER_APPLICATION_H

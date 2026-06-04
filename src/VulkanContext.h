@@ -1,0 +1,125 @@
+#ifndef OPTIX_RAYTRACER_VULKAN_CONTEXT_H
+#define OPTIX_RAYTRACER_VULKAN_CONTEXT_H
+
+#include <vulkan/vulkan.h>
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
+#include <cstdint>
+#include <vector>
+
+// Returned by beginFrame() and consumed by endFrameAndPresent().
+struct VulkanFrameContext
+{
+    uint32_t        imageIndex = UINT32_MAX;
+    VkCommandBuffer cmd        = VK_NULL_HANDLE;
+    bool            valid      = false;  // false = swapchain out of date; caller skips render
+};
+
+// Owns all Vulkan resources: instance, device, swapchain, render pass,
+// command buffers, sync objects, and the display image used to show the
+// CUDA-rendered result through ImGui.
+class VulkanContext
+{
+public:
+    VulkanContext()  = default;
+    ~VulkanContext() { cleanup(); }
+
+    VulkanContext(const VulkanContext&)            = delete;
+    VulkanContext& operator=(const VulkanContext&) = delete;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    void init(GLFWwindow* window, int width, int height);
+    void initImGui(GLFWwindow* window, int imageCount);
+    void cleanup();
+    void waitIdle() const;
+
+    // ── Swapchain ─────────────────────────────────────────────────────────────
+    void createSwapchain(int w, int h);
+    void destroySwapchain();
+    void recreateSwapchain(int w, int h);
+
+    // ── Display image (CUDA → Vulkan pixel upload) ────────────────────────────
+    void createDisplayImage(int w, int h);
+    void destroyDisplayImage();
+
+    // ── Per-frame rendering ───────────────────────────────────────────────────
+
+    // Wait for the previous frame's fence, acquire the next swapchain image, and
+    // begin recording the command buffer.  Returns valid=false if the swapchain
+    // needs to be rebuilt; the caller should skip rendering for that frame.
+    VulkanFrameContext beginFrame();
+
+    // Copy pixel data from CPU memory into the display Vulkan image via a
+    // buffer-to-image transfer recorded into cmd (before the render pass).
+    void uploadDisplayImage(VkCommandBuffer cmd, const void* pixels, int w, int h);
+
+    // Begin the main render pass (clears to the background colour).
+    void beginRenderPass(VkCommandBuffer cmd);
+
+    // End the render pass, end the command buffer, submit, and present.
+    // Handles VK_SUBOPTIMAL and VK_ERROR_OUT_OF_DATE automatically.
+    void endFrameAndPresent(VulkanFrameContext& frame, int windowW, int windowH);
+
+    // ── Utilities ─────────────────────────────────────────────────────────────
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags props) const;
+
+    // ── Accessors ─────────────────────────────────────────────────────────────
+    bool             isValid()           const { return m_device != VK_NULL_HANDLE; }
+    VkDevice         device()            const { return m_device; }
+    VkInstance       instance()          const { return m_instance; }
+    VkPhysicalDevice physDevice()        const { return m_physDevice; }
+    uint32_t         queueFamily()       const { return m_queueFamily; }
+    VkQueue          queue()             const { return m_queue; }
+    VkRenderPass     renderPass()        const { return m_renderPass; }
+    VkDescriptorPool imguiDescPool()     const { return m_imguiDescPool; }
+    int              swapchainImageCount() const { return static_cast<int>(m_scImages.size()); }
+    VkDescriptorSet  displayDescSet()    const { return m_displayDescSet; }
+    void*            displayStagingPtr() const { return m_displayStagingPtr; }
+    bool             hasDisplayImage()   const { return m_displayImage != VK_NULL_HANDLE; }
+
+private:
+    GLFWwindow*              m_window         = nullptr;  // stored for resize-on-error
+
+    // ── Core ──────────────────────────────────────────────────────────────────
+    VkInstance               m_instance       = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
+    VkPhysicalDevice         m_physDevice     = VK_NULL_HANDLE;
+    VkDevice                 m_device         = VK_NULL_HANDLE;
+    VkQueue                  m_queue          = VK_NULL_HANDLE;
+    uint32_t                 m_queueFamily    = 0;
+    VkSurfaceKHR             m_surface        = VK_NULL_HANDLE;
+
+    // ── Swapchain ─────────────────────────────────────────────────────────────
+    VkSwapchainKHR            m_swapchain    = VK_NULL_HANDLE;
+    std::vector<VkImage>      m_scImages;
+    std::vector<VkImageView>  m_scImageViews;
+    VkFormat                  m_scFormat     = VK_FORMAT_UNDEFINED;
+    VkExtent2D                m_scExtent     = {};
+
+    // ── Render pass + framebuffers ────────────────────────────────────────────
+    VkRenderPass              m_renderPass   = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> m_framebuffers;
+
+    // ── Commands + sync ───────────────────────────────────────────────────────
+    VkCommandPool             m_cmdPool      = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer> m_cmdBuffers;
+    VkSemaphore               m_imageReady   = VK_NULL_HANDLE;
+    VkSemaphore               m_renderDone   = VK_NULL_HANDLE;
+    VkFence                   m_fence        = VK_NULL_HANDLE;
+
+    // ── ImGui descriptor pool ─────────────────────────────────────────────────
+    VkDescriptorPool          m_imguiDescPool = VK_NULL_HANDLE;
+
+    // ── Display image (CUDA output → sampled GPU texture) ─────────────────────
+    VkImage          m_displayImage      = VK_NULL_HANDLE;
+    VkDeviceMemory   m_displayImageMem   = VK_NULL_HANDLE;
+    VkImageView      m_displayImageView  = VK_NULL_HANDLE;
+    VkSampler        m_displaySampler    = VK_NULL_HANDLE;
+    VkDescriptorSet  m_displayDescSet    = VK_NULL_HANDLE;
+    VkBuffer         m_displayStaging    = VK_NULL_HANDLE;
+    VkDeviceMemory   m_displayStagingMem = VK_NULL_HANDLE;
+    void*            m_displayStagingPtr = nullptr;
+};
+
+#endif // OPTIX_RAYTRACER_VULKAN_CONTEXT_H
