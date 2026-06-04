@@ -1,4 +1,4 @@
-# OptiX Path Tracer
+# OptiX Raytracer
 
 A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++17, and Dear ImGui.
 
