@@ -1,6 +1,6 @@
 # OptiX Path Tracer
 
-A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, C++17, and Dear ImGui.
+A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++17, and Dear ImGui.
 
 ![App screenshot](app.PNG)
 
@@ -54,10 +54,13 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, C++17, and D
 | NVIDIA Driver | ≥ 570.x | Required by OptiX 9.1 |
 | [NVIDIA OptiX SDK](https://developer.nvidia.com/optix) | 9.1.0 | Free download; requires NVIDIA developer account |
 | [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) | 12.x or 13.x | Installs `nvcc` and CUDA runtime |
+| [Vulkan SDK](https://vulkan.lunarg.com/) | ≥ 1.3 | Installs headers, loader, and validation layers |
 | [Visual Studio 2022](https://visualstudio.microsoft.com/) | 17.x | With **Desktop development with C++** and **CUDA** workloads |
 | [CMake](https://cmake.org/download/) | ≥ 3.20 | Add to PATH during install |
 
 > **Driver check**: Run `nvidia-smi`. The driver version appears top-right. If below 570, download the latest from [nvidia.com/drivers](https://www.nvidia.com/drivers).
+
+> **Vulkan check**: Run `vulkaninfo` (installed with the Vulkan SDK). If absent, install the [Vulkan SDK](https://vulkan.lunarg.com/) and ensure `VULKAN_SDK` is set in your environment.
 
 ---
 
@@ -77,7 +80,7 @@ build.bat          :: Debug build (configures automatically on first run)
 build.bat Release  :: Release build
 ```
 
-On first run, CMake fetches GLFW, ImGui, ImGuizmo, tinygltf, tinyexr, and nativefiledialog-extended from GitHub — internet access is required. Delete `build\CMakeCache.txt` to force a full reconfigure.
+On first run, CMake fetches GLFW, ImGui, ImGuizmo, tinygltf, tinyexr, and nativefiledialog-extended from GitHub — internet access is required. The Vulkan SDK must already be installed and discoverable via `find_package(Vulkan)`. Delete `build\CMakeCache.txt` to force a full reconfigure.
 
 ### Visual Studio
 
@@ -139,8 +142,6 @@ Optix-Raytracer/
 ├── cmake/
 │   ├── FindOptiX.cmake         Locates the OptiX SDK; creates the OptiX::OptiX target
 │   └── cuda_intellisense.props.in  VS property sheet: adds OptiX to IntelliSense
-├── extern/
-│   └── glad/                   Pre-generated OpenGL 3.3 core function loader
 ├── shaders/
 │   ├── device_math.h           float3 operator overloads (+ − * / for device and host)
 │   ├── LaunchParams.h          GPU parameter struct shared between host and device
@@ -177,6 +178,12 @@ CUDA Toolkit is not on PATH. Reinstall CUDA Toolkit and ensure it is added to PA
 
 **`CUDA : error : Cannot find compiler 'cl.exe'`**  
 Visual Studio C++ workload is missing. Open the VS Installer, modify the 2022 installation, and add **Desktop development with C++**.
+
+**`Vulkan SDK not found` during configure**  
+Install the [Vulkan SDK](https://vulkan.lunarg.com/) and ensure the `VULKAN_SDK` environment variable is set (the installer does this automatically). Re-run `configure.bat` after installation.
+
+**Black Viewport on startup**  
+The Vulkan validation layer may be printing errors to stderr. Run from a terminal to see them. Common causes: outdated driver (update to ≥ 570.x) or missing Vulkan instance extensions from GLFW.
 
 **Image is very dark or very bright**  
 Adjust the **Env Exposure** slider in the Raytracer panel. For scenes with emissive materials adjust the emissive scale on the material.

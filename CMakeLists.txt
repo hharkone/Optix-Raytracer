@@ -23,7 +23,7 @@ set(CMAKE_CUDA_ARCHITECTURES 75 86 89)
 # ── Project ──────────────────────────────────────────────────────────────────
 project(OptixRaytracer
     VERSION 0.1.0
-    LANGUAGES CXX CUDA C  # C is needed for GLAD; declared here so detection
+    LANGUAGES CXX CUDA C  # C is needed for miniz (tinyexr); declared here so detection
 )                         # runs upfront rather than being triggered by GLFW's nested project()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -46,7 +46,7 @@ list(PREPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 # ── System / SDK dependencies ─────────────────────────────────────────────────
 find_package(OptiX     REQUIRED)
 find_package(CUDAToolkit REQUIRED)
-find_package(OpenGL    REQUIRED)
+find_package(Vulkan    REQUIRED)
 
 # ── Third-party via FetchContent ──────────────────────────────────────────────
 include(FetchContent)
@@ -94,13 +94,13 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/imgui_demo.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
 target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )
-target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
+target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
 target_compile_options(imgui PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W0>)
 
 # ImGuizmo — 3D gizmo (translate / rotate / scale) overlay for Dear ImGui.
@@ -150,9 +150,6 @@ FetchContent_Declare(nfd
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(nfd)
-
-# GLAD — pre-generated OpenGL 3.3 core function loader (committed to repo)
-add_subdirectory(extern/glad)
 
 # ── Project subdirectories ────────────────────────────────────────────────────
 add_subdirectory(shaders)   # device_programs OBJECT library (PTX)

@@ -29,8 +29,7 @@ target_include_directories(OptixRaytracer PRIVATE
 target_link_libraries(OptixRaytracer PRIVATE
     CUDA::cudart
     CUDA::cuda_driver
-    OpenGL::GL
-    glad
+    Vulkan::Vulkan
     glfw
     imgui
     tinygltf

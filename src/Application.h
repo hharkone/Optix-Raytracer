@@ -4,8 +4,8 @@
 #include <optix.h>
 #include <optix_stubs.h>
 #include <cuda_runtime.h>
-// GLFW_INCLUDE_NONE prevents glfw3.h from pulling in GL headers — glad owns that
-#define GLFW_INCLUDE_NONE
+// GLFW_INCLUDE_VULKAN lets glfw3.h pull in vulkan.h automatically
+#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
 #include "Accel.h"
@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 class Application
 {
@@ -44,15 +45,58 @@ private:
     std::unique_ptr<Scene> m_scene;
     std::unique_ptr<Accel> m_accel;  // null = no scene loaded or AS not yet built
 
-    // Framebuffer — filled by device programs, displayed via OpenGL texture
+    // Framebuffer — filled by device programs, displayed via Vulkan image (Phase 3)
     uchar4*      d_colorBuffer   = nullptr;  // CUDA device buffer
     uchar4*      h_colorBuffer   = nullptr;  // host staging buffer
-    unsigned int m_displayTexture = 0;       // GL_RGBA8 texture (GLuint)
     int          m_viewportWidth  = 0;       // current framebuffer dimensions
     int          m_viewportHeight = 0;       // driven by the Viewport panel size
 
+    // ── Vulkan core ────────────────────────────────────────────────────────────
+    VkInstance               m_vkInstance       = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT m_vkDebugMessenger = VK_NULL_HANDLE;
+    VkPhysicalDevice         m_vkPhysicalDevice = VK_NULL_HANDLE;
+    VkDevice                 m_vkDevice         = VK_NULL_HANDLE;
+    VkQueue                  m_vkQueue          = VK_NULL_HANDLE;
+    uint32_t                 m_vkQueueFamily    = 0;
+    VkSurfaceKHR             m_vkSurface        = VK_NULL_HANDLE;
+
+    // ── Swap chain ─────────────────────────────────────────────────────────────
+    VkSwapchainKHR                m_vkSwapchain     = VK_NULL_HANDLE;
+    std::vector<VkImage>          m_swapchainImages;
+    std::vector<VkImageView>      m_swapchainImageViews;
+    VkFormat                      m_swapchainFormat = VK_FORMAT_UNDEFINED;
+    VkExtent2D                    m_swapchainExtent = {};
+
+    // ── Render pass + framebuffers ─────────────────────────────────────────────
+    VkRenderPass                  m_vkRenderPass = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer>    m_swapchainFramebuffers;
+
+    // ── Commands + sync ────────────────────────────────────────────────────────
+    VkCommandPool                 m_vkCommandPool    = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer>  m_vkCommandBuffers;
+    VkSemaphore                   m_imageAvailable   = VK_NULL_HANDLE;
+    VkSemaphore                   m_renderFinished   = VK_NULL_HANDLE;
+    VkFence                       m_inFlightFence    = VK_NULL_HANDLE;
+
+    // ── ImGui descriptor pool ──────────────────────────────────────────────────
+    VkDescriptorPool              m_imguiDescPool    = VK_NULL_HANDLE;
+
+    // ── Display image (Phase 3 — CUDA→Vulkan upload) ───────────────────────────
+    VkImage          m_displayImage      = VK_NULL_HANDLE;
+    VkDeviceMemory   m_displayImageMem   = VK_NULL_HANDLE;
+    VkImageView      m_displayImageView  = VK_NULL_HANDLE;
+    VkSampler        m_displaySampler    = VK_NULL_HANDLE;
+    VkDescriptorSet  m_displayDescSet    = VK_NULL_HANDLE;
+    VkBuffer         m_displayStaging    = VK_NULL_HANDLE;
+    VkDeviceMemory   m_displayStagingMem = VK_NULL_HANDLE;
+    void*            m_displayStagingPtr = nullptr;
+
     void initWindow(const std::string& title);
-    void initOpenGL();
+    void initVulkan();
+    void createSwapchain(int w, int h);
+    void destroySwapchain();
+    void recreateSwapchain(int w, int h);
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags props) const;
     void initImGui();
     void initCuda();
     void initOptix();
