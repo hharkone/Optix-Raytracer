@@ -538,6 +538,7 @@ void Application::resizeFramebuffer(int w, int h)
     delete[] h_colorBuffer;
     h_colorBuffer = nullptr;
 
+    m_vkCtx.waitIdle();
     m_vkCtx.destroyDisplayImage();
 
     m_viewportWidth  = w;

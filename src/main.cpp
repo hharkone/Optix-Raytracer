@@ -13,7 +13,7 @@ int main(int /*argc*/, char** argv)
         const std::string ptxDir =
             std::filesystem::path(argv[0]).parent_path().string();
 
-        Application app(1280, 720, "OptiX Raytracer", ptxDir);
+        Application app(1920, 1080, "OptiX Raytracer", ptxDir);
         while (app.tick()) {}
     }
     catch (const std::exception& e)

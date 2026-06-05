@@ -57,6 +57,25 @@ add_custom_target(copy_ptx ALL
 )
 add_dependencies(OptixRaytracer copy_ptx)
 
+# Install the versioned default Dear ImGui layout next to the executable the
+# first time it is absent.  Uses a cmake -P script so the copy is skipped when
+# the file already exists, preserving any layout the user has customised at
+# runtime without requiring a manual step after every clean reconfigure.
+add_custom_command(TARGET OptixRaytracer POST_BUILD
+    # Alongside the executable (used when launching the .exe directly)
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC="${CMAKE_SOURCE_DIR}/imgui.ini"
+        -DDST="$<TARGET_FILE_DIR:OptixRaytracer>/imgui.ini"
+        -P  "${CMAKE_SOURCE_DIR}/cmake/InstallDefaultIni.cmake"
+    # In build/src/ (Visual Studio sets this as the working directory when
+    # launching via F5, so ImGui looks for imgui.ini there)
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC="${CMAKE_SOURCE_DIR}/imgui.ini"
+        -DDST="${CMAKE_BINARY_DIR}/src/imgui.ini"
+        -P  "${CMAKE_SOURCE_DIR}/cmake/InstallDefaultIni.cmake"
+    COMMENT "Installing default imgui.ini (skipped if already present)"
+)
+
 # Suppress LNK4098 — GLFW is built with release CRT; /NODEFAULTLIB suppresses
 # the "defaultlib LIBCMT conflicts" warning in Debug builds without breaking linkage
 target_link_options(OptixRaytracer PRIVATE
