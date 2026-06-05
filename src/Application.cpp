@@ -1623,6 +1623,14 @@ bool Application::tick()
                             anyMatChanged = true;
                         if (ImGui::SliderFloat("Coat Roughness", &mats[i].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
                             anyMatChanged = true;
+
+                        ImGui::Separator();
+                        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+                        if (ImGui::DragFloat2("Tiling",  &mats[i].uvTransform.x, 0.01f, 0.0f, 0.0f, "%.3f"))
+                            anyMatChanged = true;
+                        if (ImGui::DragFloat2("Offset",  &mats[i].uvTransform.z, 0.01f, 0.0f, 0.0f, "%.3f"))
+                            anyMatChanged = true;
+                        ImGui::PopItemWidth();
                     }
 
                     ImGui::PopID();

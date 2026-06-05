@@ -18,6 +18,10 @@ struct MeshData
 // or a device-side MaterialData array. No std::string; names live in Scene on the host.
 struct MaterialData
 {
+    // UV transform applied to all texture lookups on this material.
+    // xy = tiling (scale), zw = offset.  Default: scale=(1,1), offset=(0,0).
+    float4 uvTransform   = { 1.0f, 1.0f, 0.0f, 0.0f };
+
     float3 albedo        = { 1.0f, 1.0f, 1.0f };
     int    albedoTexture = -1;    // index into device texture array; -1 = no texture
 

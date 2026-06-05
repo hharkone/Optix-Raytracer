@@ -733,16 +733,21 @@ extern "C" __global__ void __miss__shadow()
 //   • optixLaunchParams.sceneTextures is non-null
 //   • uvs is non-null (the mesh has UV data)
 // Returns false and leaves `out` unchanged otherwise.
+// uvTransform: xy = tiling (scale), zw = offset.
 static __forceinline__ __device__
 bool sampleSceneTex(int index, const float2* uvs, const uint3& tri,
-                    float w0, float2 bc, float4& out)
+                    float w0, float2 bc, float4 uvTransform, float4& out)
 {
     if (index < 0 || !optixLaunchParams.sceneTextures || !uvs)
         return false;
 
-    const float2 uv = make_float2(
+    // Interpolate raw mesh UV, then apply tiling and offset.
+    const float2 uvRaw = make_float2(
         uvs[tri.x].x * w0 + uvs[tri.y].x * bc.x + uvs[tri.z].x * bc.y,
         uvs[tri.x].y * w0 + uvs[tri.y].y * bc.x + uvs[tri.z].y * bc.y);
+    const float2 uv = make_float2(
+        uvRaw.x * uvTransform.x + uvTransform.z,
+        uvRaw.y * uvTransform.y + uvTransform.w);
 
     out = tex2D<float4>(optixLaunchParams.sceneTextures[index], uv.x, uv.y);
     return true;
@@ -780,14 +785,14 @@ extern "C" __global__ void __closesthit__radiance()
         // Albedo — base colour × texture tint (glTF: baseColorFactor × baseColorTexture)
         vtx->albedo = mat.albedo;
         float4 texSample;
-        if (sampleSceneTex(mat.albedoTexture, mesh.uvs, tri, w0, bc, texSample))
+        if (sampleSceneTex(mat.albedoTexture, mesh.uvs, tri, w0, bc, mat.uvTransform, texSample))
             vtx->albedo = make_float3(vtx->albedo.x * texSample.x,
                                       vtx->albedo.y * texSample.y,
                                       vtx->albedo.z * texSample.z);
 
         // Roughness — red channel × roughness factor
         vtx->roughness = mat.roughness;
-        if (sampleSceneTex(mat.roughnessTexture, mesh.uvs, tri, w0, bc, texSample))
+        if (sampleSceneTex(mat.roughnessTexture, mesh.uvs, tri, w0, bc, mat.uvTransform, texSample))
             vtx->roughness *= texSample.x;
 
         vtx->metallic      = mat.metallic;
