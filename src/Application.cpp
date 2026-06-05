@@ -1058,7 +1058,7 @@ bool Application::tick()
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();  // must be called once per frame, right after ImGui::NewFrame()
-    ImGui::ShowDemoWindow();
+    //ImGui::ShowDemoWindow();
     // Camera input is processed here — after NewFrame() so WantCaptureMouse /
     // WantCaptureKeyboard are current, but before the GPU launch so this frame
     // renders with the updated camera.
@@ -1587,7 +1587,21 @@ bool Application::tick()
                                                ? ("Material " + std::to_string(i))
                                                : rawName;
 
-                    if (ImGui::CollapsingHeader(header.c_str()))
+                    const bool matOpen = ImGui::CollapsingHeader(header.c_str(),
+                        ImGuiTreeNodeFlags_AllowOverlap);
+
+                    // When collapsed, show a compact clickable colour swatch
+                    // inline with the header — clicking it opens a colour picker.
+                    if (!matOpen)
+                    {
+                        const float swatchSize = ImGui::GetFrameHeight();
+                        ImGui::SameLine(ImGui::GetContentRegionMax().x - swatchSize);
+                        if (ImGui::ColorEdit3("##albedo_swatch", &mats[i].albedo.x,
+                                ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float))
+                            anyMatChanged = true;
+                    }
+
+                    if (matOpen)
                     {
                         if (ImGui::ColorEdit3("Albedo",   &mats[i].albedo.x, ImGuiColorEditFlags_Float))
                             anyMatChanged = true;
