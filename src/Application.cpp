@@ -629,6 +629,28 @@ void Application::rebuildTlas()
     m_accumDirty = true;
 }
 
+void Application::syncFlyCameraFromNode(int nodeIdx)
+{
+    if (nodeIdx < 0 || nodeIdx >= static_cast<int>(m_scene->nodes().size()))
+        return;
+    if (std::string(m_scene->nodeAt(nodeIdx).typeName()) != "Camera")
+        return;
+
+    // Extract position, yaw, and pitch from the node's world-space transform.
+    // This mirrors the one-time extraction in loadScene() so that editing a
+    // CameraNode via the gizmo or TRS sliders immediately moves the camera.
+    const Matrix4x4 world = m_scene->computeWorldTransform(nodeIdx);
+    m_camPos = { world.m[0][3], world.m[1][3], world.m[2][3] };
+
+    // Camera looks down its local -Z axis; column 2 is that -Z in world space.
+    const float fx = -world.m[0][2];
+    const float fy = -world.m[1][2];
+    const float fz = -world.m[2][2];
+    const float fLen = std::max(1e-6f, sqrtf(fx*fx + fy*fy + fz*fz));
+    m_camPitch = asinf(std::max(-1.0f, std::min(1.0f, fy / fLen)));
+    m_camYaw   = atan2f(fx / fLen, -(fz / fLen));
+}
+
 // ─── Material upload ─────────────────────────────────────────────────────────
 
 void Application::uploadMaterials()
@@ -1348,6 +1370,7 @@ bool Application::tick()
                 }
 
                 rebuildTlas();
+                syncFlyCameraFromNode(m_selectedNodeIdx);
             }
         }
     }
@@ -1683,10 +1706,12 @@ bool Application::tick()
             float translation[3], rotation[3], scale[3];
             ImGuizmo::DecomposeMatrixToComponents(colMajor, translation, rotation, scale);
 
+            // Reserve enough width on the left for the three drag widgets so the
+            // labels ("Translation", "Rotation", "Scale") always remain visible.
             bool changed = false;
-            ImGui::PushItemWidth(-1.0f);
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.75f);
             changed |= ImGui::DragFloat3("Translation", translation, 0.01f);
-            changed |= ImGui::DragFloat3("Rotation",    rotation,    0.1f, 0.f, 0.f, "%.2f°");
+            changed |= ImGui::DragFloat3("Rotation",    rotation,    0.1f, 0.f, 0.f, "%.2f deg");
             changed |= ImGui::DragFloat3("Scale",       scale,       0.01f);
             ImGui::PopItemWidth();
 
@@ -1695,6 +1720,7 @@ bool Application::tick()
                 ImGuizmo::RecomposeMatrixFromComponents(translation, rotation, scale, colMajor);
                 node.localTransform = mat4FromColMajor(colMajor);
                 rebuildTlas();
+                syncFlyCameraFromNode(m_selectedNodeIdx);
             }
         }
 

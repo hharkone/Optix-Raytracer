@@ -71,6 +71,9 @@ private:
     void buildEnvMapCdf();
     void uploadMaterials();
     void rebuildTlas();
+    // If nodeIdx is a CameraNode, extract its world-space transform into the
+    // fly-camera state so the next updateCamera() renders from the new position.
+    void syncFlyCameraFromNode(int nodeIdx);
     void initDenoiser();
 
     static void optixLogCallback(unsigned int level,
