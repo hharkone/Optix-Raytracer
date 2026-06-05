@@ -1261,6 +1261,16 @@ bool Application::tick()
         // ── 3D gizmo overlay ──────────────────────────────────────────────────
         // Render the ImGuizmo gizmo on top of the viewport image for the
         // currently selected scene-graph node.
+        // Gizmo operation keyboard shortcuts — active whenever a node is selected
+        // and ImGui is not consuming the keyboard for text input.
+        // 1 = Scale  |  2 = Rotate  |  3 = Translate
+        if (!ImGui::GetIO().WantTextInput)
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_1)) m_gizmoOp = ImGuizmo::SCALE;
+            if (ImGui::IsKeyPressed(ImGuiKey_2)) m_gizmoOp = ImGuizmo::ROTATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_3)) m_gizmoOp = ImGuizmo::TRANSLATE;
+        }
+
         if (m_selectedNodeIdx >= 0
             && m_selectedNodeIdx < static_cast<int>(m_scene->nodes().size()))
         {
@@ -1651,21 +1661,30 @@ bool Application::tick()
 
         ImGui::Separator();
 
-        // ── Local transform (raw matrix, for fine-grained editing) ────────────
-        if (ImGui::CollapsingHeader("Local Transform"))
+        // ── Local transform — TRS editor via ImGuizmo decomposition ─────────────
+        if (ImGui::CollapsingHeader("Local Transform", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            bool transformChanged = false;
+            // Convert our row-major Matrix4x4 to the column-major float[16] that
+            // ImGuizmo::DecomposeMatrixToComponents / RecomposeMatrixFromComponents expect.
+            float colMajor[16];
+            mat4ToColMajor(node.localTransform, colMajor);
+
+            float translation[3], rotation[3], scale[3];
+            ImGuizmo::DecomposeMatrixToComponents(colMajor, translation, rotation, scale);
+
+            bool changed = false;
             ImGui::PushItemWidth(-1.0f);
-            for (int row = 0; row < 4; ++row)
-            {
-                ImGui::PushID(row);
-                if (ImGui::DragFloat4("", node.localTransform.m[row], 0.01f))
-                    transformChanged = true;
-                ImGui::PopID();
-            }
+            changed |= ImGui::DragFloat3("Translation", translation, 0.01f);
+            changed |= ImGui::DragFloat3("Rotation",    rotation,    0.1f, 0.f, 0.f, "%.2f°");
+            changed |= ImGui::DragFloat3("Scale",       scale,       0.01f);
             ImGui::PopItemWidth();
-            if (transformChanged)
+
+            if (changed)
+            {
+                ImGuizmo::RecomposeMatrixFromComponents(translation, rotation, scale, colMajor);
+                node.localTransform = mat4FromColMajor(colMajor);
                 rebuildTlas();
+            }
         }
 
         // ── Type-specific content ─────────────────────────────────────────────
