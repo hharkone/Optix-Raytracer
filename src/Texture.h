@@ -68,12 +68,17 @@ public:
     // No-op if the texture is not HDR or has no pixel data.
     void buildCdf();
 
-    // ── EXR loader ────────────────────────────────────────────────────────────
+    // ── Image loaders ─────────────────────────────────────────────────────────
 
     // Load an EXR from disk into pixels (format = RGBA32F, host-side only).
     // Does NOT upload to GPU — call uploadToGpu() afterwards.
     // Returns false and writes outError on failure.
     bool loadEXR(const std::string& path, std::string& outError);
+
+    // Load a common LDR image (PNG, JPG, BMP, TGA, …) into pixels (format = RGBA8,
+    // host-side only).  Does NOT upload to GPU — call uploadToGpu() afterwards.
+    // Returns false and writes outError on failure.
+    bool loadImage(const std::string& path, std::string& outError);
 
 private:
     cudaArray_t gpuArray = nullptr;

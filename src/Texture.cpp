@@ -11,6 +11,11 @@
 #define TINYEXR_USE_THREAD 1
 #include <tinyexr.h>
 
+// stb_image: the implementation is compiled in SceneLoader.cpp via
+// #define STB_IMAGE_IMPLEMENTATION before #include <tiny_gltf.h>.
+// We only need the function declarations here.
+#include <stb_image.h>
+
 #include "Texture.h"
 
 #include <cmath>     // sinf, fmaxf
@@ -152,6 +157,29 @@ bool Texture::loadEXR(const std::string& path, std::string& outError)
     width  = w;
     height = h;
 
+    return true;
+}
+
+// ─── Texture::loadImage ──────────────────────────────────────────────────────
+
+bool Texture::loadImage(const std::string& path, std::string& outError)
+{
+    int w = 0, h = 0, channels = 0;
+    // Request 4 channels (RGBA) regardless of source format.
+    unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+    if (!data)
+    {
+        outError = stbi_failure_reason() ? stbi_failure_reason() : "unknown stb_image error";
+        return false;
+    }
+
+    const size_t byteCount = static_cast<size_t>(w) * h * 4;
+    pixels.assign(data, data + byteCount);
+    stbi_image_free(data);
+
+    format = PixelFormat::RGBA8;
+    width  = w;
+    height = h;
     return true;
 }
 

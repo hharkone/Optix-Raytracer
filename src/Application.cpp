@@ -730,6 +730,31 @@ void Application::loadScene(const std::string& path)
     }
 }
 
+// ─── Texture loading ─────────────────────────────────────────────────────────
+
+void Application::loadTexture(const std::string& path)
+{
+    Texture tex;
+    tex.name = std::filesystem::path(path).filename().string();
+    std::string err;
+
+    // Dispatch on file extension: EXR uses tinyexr, everything else uses stb_image.
+    const std::string ext = std::filesystem::path(path).extension().string();
+    const bool ok = (ext == ".exr" || ext == ".EXR")
+        ? tex.loadEXR(path, err)
+        : tex.loadImage(path, err);
+
+    if (!ok)
+    {
+        m_loadError = "Texture load failed: " + err;
+        return;
+    }
+
+    tex.uploadToGpu();
+    m_scene->addTexture(std::move(tex));
+    m_accumDirty = true;
+}
+
 // ─── Environment map ─────────────────────────────────────────────────────────
 
 void Application::loadEnvMap(const std::string& path)
@@ -1564,6 +1589,18 @@ bool Application::tick()
         ImGui::PopStyleVar();
         if (texOpen)
         {
+            if (ImGui::Button("Load Image..."))
+            {
+                nfdu8char_t* outPath = nullptr;
+                nfdfilteritem_t filters[] = { { "Image Files", "png,jpg,jpeg,bmp,tga,exr" } };
+                if (NFD_OpenDialogU8(&outPath, filters, 1, nullptr) == NFD_OKAY)
+                {
+                    loadTexture(reinterpret_cast<const char*>(outPath));
+                    NFD_FreePathU8(outPath);
+                }
+            }
+            ImGui::Separator();
+
             if (textures.empty())
             {
                 ImGui::TextDisabled("No textures loaded");
