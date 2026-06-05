@@ -725,6 +725,29 @@ extern "C" __global__ void __miss__shadow()
     optixSetPayload_0(1u);
 }
 
+// ─── Scene texture sampling helper ───────────────────────────────────────────
+
+// Sample a scene texture at the barycentric-interpolated UV for the current hit.
+// Returns true and writes the sampled float4 to `out` when all of the following hold:
+//   • index >= 0 (a texture is assigned)
+//   • optixLaunchParams.sceneTextures is non-null
+//   • uvs is non-null (the mesh has UV data)
+// Returns false and leaves `out` unchanged otherwise.
+static __forceinline__ __device__
+bool sampleSceneTex(int index, const float2* uvs, const uint3& tri,
+                    float w0, float2 bc, float4& out)
+{
+    if (index < 0 || !optixLaunchParams.sceneTextures || !uvs)
+        return false;
+
+    const float2 uv = make_float2(
+        uvs[tri.x].x * w0 + uvs[tri.y].x * bc.x + uvs[tri.z].x * bc.y,
+        uvs[tri.x].y * w0 + uvs[tri.y].y * bc.x + uvs[tri.z].y * bc.y);
+
+    out = tex2D<float4>(optixLaunchParams.sceneTextures[index], uv.x, uv.y);
+    return true;
+}
+
 // ─── Closest-hit ─────────────────────────────────────────────────────────────
 
 extern "C" __global__ void __closesthit__radiance()
@@ -754,31 +777,19 @@ extern "C" __global__ void __closesthit__radiance()
     if (optixLaunchParams.materials && mesh.materialIndex >= 0)
     {
         const MaterialData& mat = optixLaunchParams.materials[mesh.materialIndex];
+        // Albedo — base colour × texture tint (glTF: baseColorFactor × baseColorTexture)
         vtx->albedo = mat.albedo;
+        float4 texSample;
+        if (sampleSceneTex(mat.albedoTexture, mesh.uvs, tri, w0, bc, texSample))
+            vtx->albedo = make_float3(vtx->albedo.x * texSample.x,
+                                      vtx->albedo.y * texSample.y,
+                                      vtx->albedo.z * texSample.z);
 
-        // Sample albedo texture when assigned, mesh has UVs, and the device
-        // texture array is available.  Multiplied by mat.albedo as a tint
-        // (glTF spec: baseColor = baseColorFactor × baseColorTexture).
-        if (mat.albedoTexture >= 0
-            && optixLaunchParams.sceneTextures
-            && mesh.uvs)
-        {
-            const float2 uv0 = mesh.uvs[tri.x];
-            const float2 uv1 = mesh.uvs[tri.y];
-            const float2 uv2 = mesh.uvs[tri.z];
-            const float2 uv  = make_float2(
-                uv0.x * w0 + uv1.x * bc.x + uv2.x * bc.y,
-                uv0.y * w0 + uv1.y * bc.x + uv2.y * bc.y);
+        // Roughness — red channel × roughness factor
+        vtx->roughness = mat.roughness;
+        if (sampleSceneTex(mat.roughnessTexture, mesh.uvs, tri, w0, bc, texSample))
+            vtx->roughness *= texSample.x;
 
-            const float4 s = tex2D<float4>(
-                optixLaunchParams.sceneTextures[mat.albedoTexture], uv.x, uv.y);
-            vtx->albedo = make_float3(
-                vtx->albedo.x * s.x,
-                vtx->albedo.y * s.y,
-                vtx->albedo.z * s.z);
-        }
-
-        vtx->roughness     = mat.roughness;
         vtx->metallic      = mat.metallic;
         vtx->emission      = mat.emission * mat.emissionScale;
         vtx->transmission       = mat.transmission;

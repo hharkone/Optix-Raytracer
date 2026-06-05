@@ -21,8 +21,9 @@ struct MaterialData
     float3 albedo        = { 1.0f, 1.0f, 1.0f };
     int    albedoTexture = -1;    // index into device texture array; -1 = no texture
 
-    float  roughness     = 0.5f;
-    float  metallic      = 0.0f;
+    float  roughness        = 0.5f;
+    int    roughnessTexture = -1;  // index into device texture array; red channel; -1 = no texture
+    float  metallic         = 0.0f;
 
     float3 emission      = { 0.0f, 0.0f, 0.0f };
     float  emissionScale = 1.0f;

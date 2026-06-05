@@ -1581,6 +1581,32 @@ bool Application::tick()
                         }
                         if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.0f, 1.0f))
                             anyMatChanged = true;
+                        ImGui::SameLine();
+                        {
+                            const auto& textures = m_scene->textures();
+                            const int   cur      = mats[i].roughnessTexture;
+                            const std::string preview = (cur < 0 || cur >= (int)textures.size())
+                                ? "None"
+                                : (textures[cur].name.empty()
+                                    ? "Texture " + std::to_string(cur)
+                                    : textures[cur].name);
+                            ImGui::PushItemWidth(-1.0f);
+                            if (ImGui::BeginCombo("##roughnessTex", preview.c_str()))
+                            {
+                                if (ImGui::Selectable("None", cur < 0))
+                                { mats[i].roughnessTexture = -1; anyMatChanged = true; }
+                                for (int t = 0; t < (int)textures.size(); ++t)
+                                {
+                                    const std::string label = textures[t].name.empty()
+                                        ? ("Texture " + std::to_string(t))
+                                        : textures[t].name;
+                                    if (ImGui::Selectable(label.c_str(), cur == t))
+                                    { mats[i].roughnessTexture = t; anyMatChanged = true; }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::PopItemWidth();
+                        }
                         if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.0f, 1.0f))
                             anyMatChanged = true;
                         if (ImGui::ColorEdit3("Emission",  &mats[i].emission.x))
