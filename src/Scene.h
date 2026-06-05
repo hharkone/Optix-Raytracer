@@ -32,6 +32,7 @@ public:
     const std::vector<MaterialData>& materials()                const;
     std::vector<MaterialData>&       materials();               // mutable for in-place editing
     const std::vector<Texture>&      textures()                 const;
+    std::vector<Texture>&            textures();               // mutable — for uploadToGpu()
     const std::string&               materialName(int index)    const;
 
     const Camera& camera()             const;
@@ -73,6 +74,17 @@ public:
     // Per-mesh device pointers for filling SBT hit group records.
     Accel::MeshDevicePtrs meshDevicePtrs(size_t meshIdx) const;
 
+    // ── Scene textures on GPU ─────────────────────────────────────────────────
+    // Upload any CPU-only textures, then build a flat device cudaTextureObject_t[]
+    // array for indexing from shaders via MaterialData::albedoTexture.
+    void uploadTextures();
+
+    // Device pointer to the flat texture-object array; null until uploadTextures().
+    const cudaTextureObject_t* textureObjects() const;
+
+    // Free the device texture array.  Called automatically by clear().
+    void destroyTextureObjects();
+
     void clear();        // remove all scene data and free the acceleration structure
     bool empty() const;  // true when there are no meshes
 
@@ -87,6 +99,7 @@ private:
     std::vector<int>                     m_rootNodes;
 
     std::unique_ptr<Accel> m_accel;  // null until buildAccel() is called
+    CUdeviceptr m_textureObjectsBuffer = 0;  // device cudaTextureObject_t[]
 };
 
 #endif // OPTIX_RAYTRACER_SCENE_H

@@ -59,6 +59,7 @@ void Accel::destroy()
     {
         cudaFreePtr(mb.positions);
         cudaFreePtr(mb.normals);
+        cudaFreePtr(mb.uvs);
         cudaFreePtr(mb.indices);
         cudaFreePtr(mb.outputAS);
         mb.blas = 0;
@@ -197,6 +198,16 @@ void Accel::build(OptixDeviceContext ctx, const Scene& scene)
             CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(mb.normals),
                                    mesh.normals.data(),
                                    nrmByteSize, cudaMemcpyHostToDevice));
+        }
+
+        // Upload UV coordinates to device (optional — not all meshes have UVs)
+        if (!mesh.uvs.empty())
+        {
+            const size_t uvByteSize = mesh.uvs.size() * sizeof(float2);
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&mb.uvs), uvByteSize));
+            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(mb.uvs),
+                                   mesh.uvs.data(),
+                                   uvByteSize, cudaMemcpyHostToDevice));
         }
 
         // Upload triangle indices to device

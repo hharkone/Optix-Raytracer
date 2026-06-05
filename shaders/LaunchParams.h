@@ -55,6 +55,10 @@ struct LaunchParams
     // Scene materials — device pointer to a MaterialData array, indexed by
     // MeshData::materialIndex.  Null when no scene is loaded.
     const MaterialData* materials;
+
+    // Scene textures — flat device array of cudaTextureObject_t, indexed by
+    // MaterialData::albedoTexture.  Null when no textures have been uploaded.
+    const cudaTextureObject_t* sceneTextures;
 };
 
 #endif // OPTIX_RAYTRACER_LAUNCH_PARAMS_H

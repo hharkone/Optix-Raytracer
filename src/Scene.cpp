@@ -5,6 +5,15 @@
 #include <utility>
 #include <vector>
 
+// For CUDA calls in uploadTextures / destroyTextureObjects
+#define CUDA_CHECK_SCENE(call)                                                   \
+    do {                                                                         \
+        cudaError_t rc = (call);                                                 \
+        if (rc != cudaSuccess)                                                   \
+            throw std::runtime_error(                                            \
+                std::string("CUDA error in Scene: ") + cudaGetErrorString(rc)); \
+    } while (0)
+
 int Scene::addMesh(Mesh mesh)
 {
     m_meshes.push_back(std::move(mesh));
@@ -40,6 +49,11 @@ std::vector<MaterialData>& Scene::materials()
 }
 
 const std::vector<Texture>& Scene::textures() const
+{
+    return m_textures;
+}
+
+std::vector<Texture>& Scene::textures()
 {
     return m_textures;
 }
@@ -89,8 +103,53 @@ const std::vector<int>& Scene::rootNodes() const
     return m_rootNodes;
 }
 
+// ─── Scene texture GPU management ────────────────────────────────────────────
+
+void Scene::uploadTextures()
+{
+    // Upload any texture that is still CPU-only (e.g. loaded from glTF)
+    for (Texture& tex : m_textures)
+        if (tex.gpuTex == 0 && !tex.pixels.empty())
+            tex.uploadToGpu();
+
+    // Build a flat host-side array of texture objects, then copy to device
+    std::vector<cudaTextureObject_t> objs;
+    objs.reserve(m_textures.size());
+    for (const Texture& tex : m_textures)
+        objs.push_back(tex.gpuTex);
+
+    destroyTextureObjects();
+
+    if (!objs.empty())
+    {
+        CUDA_CHECK_SCENE(cudaMalloc(reinterpret_cast<void**>(&m_textureObjectsBuffer),
+                                    objs.size() * sizeof(cudaTextureObject_t)));
+        CUDA_CHECK_SCENE(cudaMemcpy(reinterpret_cast<void*>(m_textureObjectsBuffer),
+                                    objs.data(),
+                                    objs.size() * sizeof(cudaTextureObject_t),
+                                    cudaMemcpyHostToDevice));
+    }
+}
+
+void Scene::destroyTextureObjects()
+{
+    if (m_textureObjectsBuffer)
+    {
+        cudaFree(reinterpret_cast<void*>(m_textureObjectsBuffer));
+        m_textureObjectsBuffer = 0;
+    }
+}
+
+const cudaTextureObject_t* Scene::textureObjects() const
+{
+    return m_textureObjectsBuffer
+        ? reinterpret_cast<const cudaTextureObject_t*>(m_textureObjectsBuffer)
+        : nullptr;
+}
+
 void Scene::clear()
 {
+    destroyTextureObjects();
     m_accel.reset();  // free GPU AS memory before geometry is cleared
     m_meshes.clear();
     m_materials.clear();

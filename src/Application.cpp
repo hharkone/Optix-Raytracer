@@ -513,7 +513,7 @@ void Application::buildSbt()
             hitRecs[i].data.positions  = reinterpret_cast<const float3*>(ptrs.positions);
             hitRecs[i].data.normals    = reinterpret_cast<const float3*>(ptrs.normals);
             hitRecs[i].data.indices    = reinterpret_cast<const uint3*>(ptrs.indices);
-            hitRecs[i].data.uvs        = nullptr;
+            hitRecs[i].data.uvs        = reinterpret_cast<const float2*>(ptrs.uvs);
             hitRecs[i].data.materialIndex = meshes[i].materialIndex;
         }
     }
@@ -708,6 +708,7 @@ void Application::loadScene(const std::string& path)
         m_materialsBuffer = 0;
     }
     uploadMaterials();
+    m_scene->uploadTextures();  // upload glTF textures to GPU and build device array
 
     m_accumDirty = true;  // scene changed — clear accumulated samples
     buildSbt();  // rebuild with new mesh count (0 if load failed or no geometry)
@@ -752,6 +753,7 @@ void Application::loadTexture(const std::string& path)
 
     tex.uploadToGpu();
     m_scene->addTexture(std::move(tex));
+    m_scene->uploadTextures();  // rebuild the device texture-object array
     m_accumDirty = true;
 }
 
@@ -1060,6 +1062,7 @@ bool Application::tick()
         m_launchParams.accumBuffer    = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
         m_launchParams.sampleIndex    = m_sampleCount;
         m_launchParams.materials      = m_materialsBuffer ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
+        m_launchParams.sceneTextures  = m_scene->textureObjects();
         m_launchParams.normalBuffer   = m_normalBuffer ? reinterpret_cast<float4*>(m_normalBuffer) : nullptr;
         m_launchParams.albedoBuffer   = m_albedoBuffer ? reinterpret_cast<float4*>(m_albedoBuffer) : nullptr;
         m_launchParams.hdrBuffer      = m_hdrBuffer    ? reinterpret_cast<float4*>(m_hdrBuffer)    : nullptr;
@@ -1544,8 +1547,38 @@ bool Application::tick()
 
                     if (matOpen)
                     {
-                        if (ImGui::ColorEdit3("Albedo",   &mats[i].albedo.x, ImGuiColorEditFlags_Float))
+                        // Albedo colour + texture selector on the same line
+                        if (ImGui::ColorEdit3("Albedo", &mats[i].albedo.x, ImGuiColorEditFlags_Float))
                             anyMatChanged = true;
+
+                        ImGui::SameLine();
+                        {
+                            const auto& textures = m_scene->textures();
+                            const int   cur      = mats[i].albedoTexture;
+                            const std::string preview = (cur < 0 || cur >= (int)textures.size())
+                                ? "None"
+                                : (textures[cur].name.empty()
+                                    ? "Texture " + std::to_string(cur)
+                                    : textures[cur].name);
+
+                            ImGui::PushItemWidth(-1.0f);  // fill remaining line width
+                            if (ImGui::BeginCombo("##albedoTex", preview.c_str()))
+                            {
+                                if (ImGui::Selectable("None", cur < 0))
+                                { mats[i].albedoTexture = -1; anyMatChanged = true; }
+
+                                for (int t = 0; t < (int)textures.size(); ++t)
+                                {
+                                    const std::string label = textures[t].name.empty()
+                                        ? ("Texture " + std::to_string(t))
+                                        : textures[t].name;
+                                    if (ImGui::Selectable(label.c_str(), cur == t))
+                                    { mats[i].albedoTexture = t; anyMatChanged = true; }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::PopItemWidth();
+                        }
                         if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.0f, 1.0f))
                             anyMatChanged = true;
                         if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.0f, 1.0f))

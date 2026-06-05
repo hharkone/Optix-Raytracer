@@ -48,12 +48,14 @@ public:
     {
         CUdeviceptr positions;  // device float3 array
         CUdeviceptr normals;    // device float3 array
+        CUdeviceptr uvs;        // device float2 array (0 when mesh has no UVs)
         CUdeviceptr indices;    // device uint3  array
     };
     MeshDevicePtrs meshDevicePtrs(size_t idx) const
     {
         return { m_meshBuffers[idx].positions,
                  m_meshBuffers[idx].normals,
+                 m_meshBuffers[idx].uvs,
                  m_meshBuffers[idx].indices };
     }
 
@@ -63,6 +65,7 @@ private:
     {
         CUdeviceptr            positions = 0;  // device copy of Mesh::positions
         CUdeviceptr            normals   = 0;  // device copy of Mesh::normals
+        CUdeviceptr            uvs       = 0;  // device copy of Mesh::uvs (0 if absent)
         CUdeviceptr            indices   = 0;  // device copy of Mesh::indices
         CUdeviceptr            outputAS  = 0;  // compacted BLAS output buffer
         OptixTraversableHandle blas      = 0;

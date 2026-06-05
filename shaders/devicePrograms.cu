@@ -754,7 +754,30 @@ extern "C" __global__ void __closesthit__radiance()
     if (optixLaunchParams.materials && mesh.materialIndex >= 0)
     {
         const MaterialData& mat = optixLaunchParams.materials[mesh.materialIndex];
-        vtx->albedo        = mat.albedo;
+        vtx->albedo = mat.albedo;
+
+        // Sample albedo texture when assigned, mesh has UVs, and the device
+        // texture array is available.  Multiplied by mat.albedo as a tint
+        // (glTF spec: baseColor = baseColorFactor × baseColorTexture).
+        if (mat.albedoTexture >= 0
+            && optixLaunchParams.sceneTextures
+            && mesh.uvs)
+        {
+            const float2 uv0 = mesh.uvs[tri.x];
+            const float2 uv1 = mesh.uvs[tri.y];
+            const float2 uv2 = mesh.uvs[tri.z];
+            const float2 uv  = make_float2(
+                uv0.x * w0 + uv1.x * bc.x + uv2.x * bc.y,
+                uv0.y * w0 + uv1.y * bc.x + uv2.y * bc.y);
+
+            const float4 s = tex2D<float4>(
+                optixLaunchParams.sceneTextures[mat.albedoTexture], uv.x, uv.y);
+            vtx->albedo = make_float3(
+                vtx->albedo.x * s.x,
+                vtx->albedo.y * s.y,
+                vtx->albedo.z * s.z);
+        }
+
         vtx->roughness     = mat.roughness;
         vtx->metallic      = mat.metallic;
         vtx->emission      = mat.emission * mat.emissionScale;
