@@ -42,8 +42,7 @@ private:
 
     OptixDeviceContext m_optixContext   = nullptr;
 
-    std::unique_ptr<Scene> m_scene;
-    std::unique_ptr<Accel> m_accel;  // null = no scene loaded or AS not yet built
+    std::unique_ptr<Scene> m_scene;  // owns geometry, materials, nodes, and the Accel
 
     // Framebuffer — CUDA device/host buffers for the rendered image
     uchar4*      d_colorBuffer   = nullptr;  // CUDA device buffer

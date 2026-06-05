@@ -117,7 +117,7 @@ Application::~Application()
         m_materialsBuffer = 0;
     }
 
-    m_accel.reset();  // free AS device memory before destroying OptiX context
+    if (m_scene) m_scene->destroyAccel();  // free AS GPU memory before destroying OptiX context
 
     // ── Denoiser resources ────────────────────────────────────────────────────
     if (m_denoiser)
@@ -507,9 +507,9 @@ void Application::buildSbt()
     {
         OPTIX_CHECK(optixSbtRecordPackHeader(m_pgHitgroup, &hitRecs[i]));
 
-        if (m_accel && m_accel->valid())
+        if (m_scene->hasAccel())
         {
-            const auto ptrs            = m_accel->meshDevicePtrs(i);
+            const auto ptrs            = m_scene->meshDevicePtrs(i);
             hitRecs[i].data.positions  = reinterpret_cast<const float3*>(ptrs.positions);
             hitRecs[i].data.normals    = reinterpret_cast<const float3*>(ptrs.normals);
             hitRecs[i].data.indices    = reinterpret_cast<const uint3*>(ptrs.indices);
@@ -615,13 +615,11 @@ void Application::resizeFramebuffer(int w, int h)
 
 void Application::rebuildTlas()
 {
-    if (!m_accel || !m_accel->valid())
-    {
+    if (!m_scene->hasAccel())
         return;
-    }
     try
     {
-        m_accel->rebuildTlas(m_optixContext, *m_scene);
+        m_scene->rebuildTlas(m_optixContext);
     }
     catch (const std::exception& e)
     {
@@ -676,8 +674,7 @@ void Application::uploadMaterials()
 
 void Application::loadScene(const std::string& path)
 {
-    m_scene->clear();
-    m_accel.reset();
+    m_scene->clear();  // also resets the accel via Scene::clear()
     m_loadError.clear();
     m_selectedNodeIdx = -1;
     m_sceneFilePath.clear();
@@ -690,13 +687,12 @@ void Application::loadScene(const std::string& path)
         {
             try
             {
-                m_accel = std::make_unique<Accel>();
-                m_accel->build(m_optixContext, *m_scene);
+                m_scene->buildAccel(m_optixContext);
             }
             catch (const std::exception& e)
             {
                 m_loadError = std::string("AS build failed: ") + e.what();
-                m_accel.reset();
+                m_scene->destroyAccel();
             }
         }
     }
@@ -1026,7 +1022,7 @@ bool Application::tick()
 
         m_launchParams.colorBuffer    = d_colorBuffer;
         m_launchParams.fbSize         = make_uint2(static_cast<unsigned int>(m_viewportWidth), static_cast<unsigned int>(m_viewportHeight));
-        m_launchParams.traversable    = (m_accel && m_accel->valid()) ? m_accel->traversable() : 0;
+        m_launchParams.traversable    = m_scene->traversable();
         m_launchParams.envMap            = m_envMap.gpuTex;
         m_launchParams.envMapRotation    = m_envMapRotation;
         m_launchParams.envExposure       = m_envExposure;
@@ -1434,7 +1430,7 @@ bool Application::tick()
     }
 
     ImGui::Separator();
-    if (m_accel && m_accel->valid())
+    if (m_scene->hasAccel())
     {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 1.0f), "AS: ready");
     }

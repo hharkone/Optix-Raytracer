@@ -91,6 +91,7 @@ const std::vector<int>& Scene::rootNodes() const
 
 void Scene::clear()
 {
+    m_accel.reset();  // free GPU AS memory before geometry is cleared
     m_meshes.clear();
     m_materials.clear();
     m_materialNames.clear();
@@ -104,6 +105,42 @@ bool Scene::empty() const
 {
     return m_meshes.empty();
 }
+
+// ─── Acceleration structure ───────────────────────────────────────────────────
+
+void Scene::buildAccel(OptixDeviceContext ctx)
+{
+    m_accel = std::make_unique<Accel>();
+    m_accel->build(ctx, *this);
+}
+
+void Scene::rebuildTlas(OptixDeviceContext ctx)
+{
+    if (m_accel && m_accel->valid())
+        m_accel->rebuildTlas(ctx, *this);
+}
+
+void Scene::destroyAccel()
+{
+    m_accel.reset();
+}
+
+bool Scene::hasAccel() const
+{
+    return m_accel && m_accel->valid();
+}
+
+OptixTraversableHandle Scene::traversable() const
+{
+    return m_accel ? m_accel->traversable() : 0;
+}
+
+Accel::MeshDevicePtrs Scene::meshDevicePtrs(size_t meshIdx) const
+{
+    return m_accel->meshDevicePtrs(meshIdx);
+}
+
+// ─── Node transforms ──────────────────────────────────────────────────────────
 
 Matrix4x4 Scene::computeWorldTransform(int nodeIdx) const
 {
