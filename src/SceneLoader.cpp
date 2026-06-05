@@ -13,28 +13,9 @@
 #include <cmath>
 #include <string>
 
-// ─── Matrix4x4 helpers ────────────────────────────────────────────────────────
-// mat4Identity() and mat4Multiply() are now inline in Math.h (included via Scene.h).
-
-// Inverse of a rigid-body transform (pure rotation + translation, no scale).
-// Uses the analytical shortcut: R^-1 = R^T, t^-1 = -R^T * t.
-static Matrix4x4 mat4RigidInverse(const Matrix4x4& m)
-{
-    Matrix4x4 inv;
-    for (int r = 0; r < 3; ++r)
-    {
-        for (int c = 0; c < 3; ++c)
-        {
-            inv.m[r][c] = m.m[c][r];  // transpose the 3x3 rotation block
-        }
-    }
-    const float tx = m.m[0][3], ty = m.m[1][3], tz = m.m[2][3];
-    inv.m[0][3] = -(inv.m[0][0]*tx + inv.m[0][1]*ty + inv.m[0][2]*tz);
-    inv.m[1][3] = -(inv.m[1][0]*tx + inv.m[1][1]*ty + inv.m[1][2]*tz);
-    inv.m[2][3] = -(inv.m[2][0]*tx + inv.m[2][1]*ty + inv.m[2][2]*tz);
-    inv.m[3][3] = 1.0f;
-    return inv;
-}
+// Matrix4x4 helpers (mat4Identity, mat4Multiply, mat4Inverse, mat4RigidInverse,
+// mat4ToColMajor, mat4FromColMajor) are all defined inline in Matrix4x4.h,
+// included transitively via SceneLoader.h → Scene.h → Node3D.h → Matrix4x4.h.
 
 // Builds the node's local matrix from either the stored 4x4 or TRS values.
 // glTF matrices are column-major; we store row-major so we transpose on import.

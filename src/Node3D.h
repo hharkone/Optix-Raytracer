@@ -1,7 +1,7 @@
 #ifndef OPTIX_RAYTRACER_NODE3D_H
 #define OPTIX_RAYTRACER_NODE3D_H
 
-#include "Math.h"
+#include "Matrix4x4.h"
 #include <memory>
 #include <string>
 #include <vector>

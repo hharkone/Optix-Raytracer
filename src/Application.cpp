@@ -191,6 +191,17 @@ void Application::initImGui()
     // ImGuiConfigFlags_ViewportsEnable disabled — Vulkan multi-viewport requires
     // per-viewport swapchains (significant extra complexity).
     ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.02f, 0.04f, 0.07f, 0.94f);
+    style.FrameRounding = 4.0f;
+    style.WindowRounding = 8.0f;
+    style.GrabRounding = 4.0f;
+    style.WindowPadding = ImVec2(4.0f, 4.0f);
+    style.FramePadding = ImVec2(4.0f, 4.0f);
+    style.ItemSpacing = ImVec2(8.0f, 4.0f);
+    style.IndentSpacing = 16.0f;
+    style.TreeLinesFlags = ImGuiTreeNodeFlags_DrawLinesFull;
+
     m_vkCtx.initImGui(m_window, m_vkCtx.swapchainImageCount());
 }
 void Application::initCuda()
@@ -1640,7 +1651,7 @@ bool Application::tick()
         ImGui::Separator();
 
         // ── Gizmo operation selector ──────────────────────────────────────────
-        ImGui::Text("Gizmo:");
+        ImGui::Text("Operation:");
         ImGui::SameLine();
         if (ImGui::RadioButton("Translate", m_gizmoOp == ImGuizmo::TRANSLATE))
             m_gizmoOp = ImGuizmo::TRANSLATE;
@@ -1650,8 +1661,8 @@ bool Application::tick()
         ImGui::SameLine();
         if (ImGui::RadioButton("Scale", m_gizmoOp == ImGuizmo::SCALE))
             m_gizmoOp = ImGuizmo::SCALE;
-        ImGui::SameLine();
-        ImGui::Spacing();
+
+        ImGui::Text("Space:    ");
         ImGui::SameLine();
         if (ImGui::RadioButton("Local", m_gizmoMode == ImGuizmo::LOCAL))
             m_gizmoMode = ImGuizmo::LOCAL;

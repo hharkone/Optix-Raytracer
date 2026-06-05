@@ -5,7 +5,7 @@
 // output buffer are kept alive in MeshBuffers / m_tlasOutputBuffer so OptiX
 // can continue to traverse them during rendering.
 #include "Accel.h"
-#include "Math.h"
+#include "Matrix4x4.h"
 #include "Node3D.h"
 #include "Scene.h"
 
