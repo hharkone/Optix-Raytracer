@@ -35,9 +35,9 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 |---|---|
 | **Viewport** | Live rendered image, resizes dynamically |
 | **Raytracer** | GPU stats, sample count, denoiser toggle, environment controls |
-| **Materials** | Per-material editor with all PBR parameters including clearcoat, transmission, and IOR |
+| **Resources** | Collapsible sub-categories: **Materials** (per-material PBR editor with albedo swatch preview) and **Textures** (loaded scene textures with dimensions and format) |
 | **Scene Graph** | Hierarchy tree of all scene nodes (click to select) |
-| **Node Properties** | Gizmo mode selector (Translate / Rotate / Scale, Local / World), raw transform matrix, material editor, camera parameters for the selected node |
+| **Node Properties** | Gizmo operation / space selector, TRS sliders, raw transform matrix, material editor, camera parameters for the selected node |
 
 ### Performance
 - **PTX hot-reload** — edit `devicePrograms.cu`, rebuild the PTX, and the shader reloads without restarting; accumulation resets automatically
@@ -125,6 +125,7 @@ cmake --build build --config Release --parallel
 | **Click node in Scene Graph** | Select node; 3D gizmo appears in Viewport |
 | **Drag gizmo handle** | Translate / rotate / scale the selected node |
 | **Translate / Rotate / Scale buttons** | Switch gizmo operation (Node Properties panel) |
+| **1 / 2 / 3** | Keyboard shortcut: Scale / Rotate / Translate |
 | **Local / World buttons** | Switch gizmo reference space (Node Properties panel) |
 | **Open glTF…** | Browse for `.gltf` or `.glb` scene file |
 | **Open EXR…** | Browse for an equirectangular HDR environment map |
@@ -138,10 +139,12 @@ cmake --build build --config Release --parallel
 Optix-Raytracer/
 ├── CMakeLists.txt              Root build: project settings, FetchContent, subdirs
 ├── build.bat / configure.bat   Convenience build scripts
+├── imgui.ini                   Versioned default Dear ImGui window layout
 ├── app.PNG                     Application screenshot
 ├── cmake/
 │   ├── FindOptiX.cmake         Locates the OptiX SDK; creates the OptiX::OptiX target
-│   └── cuda_intellisense.props.in  VS property sheet: adds OptiX to IntelliSense
+│   ├── cuda_intellisense.props.in  VS property sheet: adds OptiX to IntelliSense
+│   └── InstallDefaultIni.cmake Install imgui.ini next to the exe on first build
 ├── shaders/
 │   ├── device_math.h           float3 operator overloads (+ − * / for device and host)
 │   ├── LaunchParams.h          GPU parameter struct shared between host and device
@@ -152,14 +155,15 @@ Optix-Raytracer/
     ├── main.cpp                Entry point
     ├── Application.h/.cpp      CUDA/OptiX init, ImGui UI, per-frame render loop
     ├── VulkanContext.h/.cpp    Vulkan device, swapchain, render pass, display image,
-    │                           and per-frame present logic (extracted from Application)
-    ├── Math.h                  Matrix4x4 + mat4Identity / mat4Multiply
+    │                           and per-frame present logic
+    ├── Matrix4x4.h             Row-major Matrix4x4 with multiply, inverse, and
+    │                           column-major converters for ImGuizmo interop
     ├── Camera.h                Camera struct: transform, FOV, DoF parameters
     ├── Node3D.h                Node3D base + MeshNode, CameraNode, GroupNode
     ├── Scene.h/.cpp            Scene container: meshes, materials, textures, node tree
     ├── Mesh.h                  Host-side mesh: separate vertex attribute arrays
-    ├── Texture.h/.cpp          Host+GPU texture: RGBA8 / RGBA32F, EXR loading,
-    │                           GPU upload, HDRI importance-sampling CDF ownership
+    ├── Texture.h/.cpp          RAII GPU texture class: RGBA8 / RGBA32F, EXR loading,
+    │                           GPU upload, HDRI importance-sampling CDF
     ├── Accel.h/.cpp            OptiX acceleration structure: BLAS per mesh + TLAS
     ├── SceneLoader.h/.cpp      glTF 2.0 loader (tinygltf); populates Scene from file
     └── CMakeLists.txt          Executable target, include paths, link libraries

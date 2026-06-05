@@ -104,7 +104,7 @@ Application::~Application()
         m_sbtHitgroupBuffer = 0;
     }
 
-    freeTexture(m_envMap);  // also frees CDF buffers via Texture::cdfMarginal/cdfConditional
+    // m_envMap destructor frees GPU resources automatically — no explicit call needed
 
     if (m_accumBuffer)
     {
@@ -739,98 +739,18 @@ void Application::loadScene(const std::string& path)
 void Application::loadEnvMap(const std::string& path)
 {
     m_envMapError.clear();
-    freeTexture(m_envMap);  // releases texture + any previously built CDF
+    m_envMap.free();  // release old GPU resources before loading new map
     m_envMapPath.clear();
 
-    if (loadEXR(path, m_envMap, m_envMapError))
+    if (m_envMap.loadEXR(path, m_envMapError))
     {
-        uploadToGpu(m_envMap);
-        buildEnvMapCdf();
+        m_envMap.uploadToGpu();
+        m_envMap.buildCdf();
         m_envMapPath = std::filesystem::path(path).filename().string();
         m_accumDirty = true;  // new env map = new lighting; clear accumulated samples
     }
 }
 
-// ─── HDRI importance-sampling CDF ────────────────────────────────────────────
-
-void Application::buildEnvMapCdf()
-{
-    if (!m_envMap.isHdr() || m_envMap.pixels.empty())
-        return;
-
-    const int   W       = m_envMap.width;
-    const int   H       = m_envMap.height;
-    const float* src    = m_envMap.floatPixels();  // RGBA32F, row-major
-    const float  kInvPi = 0.31830988618f;
-
-    // ── Per-pixel weight = luminance(RGB) × sin(θ) ───────────────────────────
-    std::vector<float> weights(static_cast<size_t>(H) * W);
-    std::vector<float> rowSums(H, 0.f);
-
-    for (int j = 0; j < H; ++j)
-    {
-        const float theta    = (j + 0.5f) / static_cast<float>(H) * 3.14159265358979f;
-        const float sinTheta = sinf(theta);
-
-        for (int i = 0; i < W; ++i)
-        {
-            const float* p = src + (j * W + i) * 4;
-            const float  lum = 0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2];
-            const float  w   = fmaxf(0.f, lum) * sinTheta;
-            weights[j * W + i] = w;
-            rowSums[j] += w;
-        }
-    }
-
-    // ── Conditional CDF per row (prefix-sum, normalised to [0,1]) ────────────
-    std::vector<float> conditionalCdf(static_cast<size_t>(H) * W);
-
-    for (int j = 0; j < H; ++j)
-    {
-        const float invRow = (rowSums[j] > 0.f) ? 1.f / rowSums[j] : 0.f;
-        float running = 0.f;
-        for (int i = 0; i < W; ++i)
-        {
-            running += weights[j * W + i];
-            conditionalCdf[j * W + i] = (rowSums[j] > 0.f)
-                ? running * invRow
-                : (i + 1.f) / static_cast<float>(W);
-        }
-        // Force last entry to exactly 1 to prevent binary-search overrun
-        conditionalCdf[j * W + (W - 1)] = 1.f;
-    }
-
-    // ── Marginal CDF (prefix-sum over rows, normalised to [0,1]) ─────────────
-    std::vector<float> marginalCdf(H);
-    float totalWeight = 0.f;
-    for (int j = 0; j < H; ++j)
-        totalWeight += rowSums[j];
-
-    {
-        float running = 0.f;
-        for (int j = 0; j < H; ++j)
-        {
-            running += rowSums[j];
-            marginalCdf[j] = (totalWeight > 0.f)
-                ? running / totalWeight
-                : (j + 1.f) / static_cast<float>(H);
-        }
-        marginalCdf[H - 1] = 1.f;  // force last entry exactly to 1
-    }
-
-    // ── Upload to device — stored on the Texture itself ──────────────────────
-    // Any previous CDF buffers are already freed by freeTexture() in loadEnvMap().
-    const size_t marginalBytes    = static_cast<size_t>(H) * sizeof(float);
-    const size_t conditionalBytes = static_cast<size_t>(H) * W * sizeof(float);
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envMap.cdfMarginal),    marginalBytes));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_envMap.cdfConditional), conditionalBytes));
-
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envMap.cdfMarginal),
-                           marginalCdf.data(),    marginalBytes,    cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_envMap.cdfConditional),
-                           conditionalCdf.data(), conditionalBytes, cudaMemcpyHostToDevice));
-}
 
 // ─── Camera controller ───────────────────────────────────────────────────────
 
@@ -1443,7 +1363,7 @@ bool Application::tick()
         ImGui::SameLine();
         if (ImGui::Button("Clear EXR"))
         {
-            freeTexture(m_envMap);  // frees texture + CDF buffers
+            m_envMap.free();
             m_envMapPath.clear();
             m_envMapError.clear();
             m_accumDirty = true;

@@ -68,7 +68,6 @@ private:
 
     void loadScene(const std::string& path);
     void loadEnvMap(const std::string& path);
-    void buildEnvMapCdf();
     void uploadMaterials();
     void rebuildTlas();
     // If nodeIdx is a CameraNode, extract its world-space transform into the

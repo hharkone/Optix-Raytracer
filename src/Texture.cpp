@@ -13,9 +13,11 @@
 
 #include "Texture.h"
 
+#include <cmath>     // sinf, fmaxf
 #include <cstring>   // std::memcpy
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -30,26 +32,66 @@
         }                                                                        \
     } while (0)
 
-// ─── uploadToGpu ─────────────────────────────────────────────────────────────
+// ─── Move semantics ───────────────────────────────────────────────────────────
 
-void uploadToGpu(Texture& tex)
+Texture::Texture(Texture&& other) noexcept
+    : format         (other.format)
+    , pixels         (std::move(other.pixels))
+    , width          (other.width)
+    , height         (other.height)
+    , name           (std::move(other.name))
+    , gpuTex         (other.gpuTex)
+    , cdfMarginal    (other.cdfMarginal)
+    , cdfConditional (other.cdfConditional)
+    , gpuArray       (other.gpuArray)
+{
+    // Null the source so its destructor doesn't free the GPU resources we just took.
+    other.gpuArray       = nullptr;
+    other.gpuTex         = 0;
+    other.cdfMarginal    = 0;
+    other.cdfConditional = 0;
+}
+
+Texture& Texture::operator=(Texture&& other) noexcept
+{
+    if (this != &other)
+    {
+        free();  // release whatever we currently own
+        format         = other.format;
+        pixels         = std::move(other.pixels);
+        width          = other.width;
+        height         = other.height;
+        name           = std::move(other.name);
+        gpuArray       = other.gpuArray;
+        gpuTex         = other.gpuTex;
+        cdfMarginal    = other.cdfMarginal;
+        cdfConditional = other.cdfConditional;
+        other.gpuArray       = nullptr;
+        other.gpuTex         = 0;
+        other.cdfMarginal    = 0;
+        other.cdfConditional = 0;
+    }
+    return *this;
+}
+
+// ─── Texture::uploadToGpu ────────────────────────────────────────────────────
+
+void Texture::uploadToGpu()
 {
     cudaChannelFormatDesc fmt;
     cudaTextureDesc       texDesc = {};
 
-    if (tex.format == PixelFormat::RGBA32F)
+    if (format == PixelFormat::RGBA32F)
     {
-        // HDR environment map: raw float4 read, wrap longitude / clamp latitude
         fmt = cudaCreateChannelDesc<float4>();
-        texDesc.addressMode[0]   = cudaAddressModeWrap;   // U — longitude wraps
-        texDesc.addressMode[1]   = cudaAddressModeClamp;  // V — clamp at poles
+        texDesc.addressMode[0]   = cudaAddressModeWrap;
+        texDesc.addressMode[1]   = cudaAddressModeClamp;
         texDesc.filterMode       = cudaFilterModeLinear;
-        texDesc.readMode         = cudaReadModeElementType;  // return raw float4
+        texDesc.readMode         = cudaReadModeElementType;
         texDesc.normalizedCoords = 1;
     }
     else  // RGBA8
     {
-        // LDR albedo texture: read as normalised [0, 1] float4
         fmt = cudaCreateChannelDesc<uchar4>();
         texDesc.addressMode[0]   = cudaAddressModeWrap;
         texDesc.addressMode[1]   = cudaAddressModeWrap;
@@ -58,44 +100,42 @@ void uploadToGpu(Texture& tex)
         texDesc.normalizedCoords = 1;
     }
 
-    const size_t rowBytes = static_cast<size_t>(tex.width)
-                          * (tex.format == PixelFormat::RGBA32F
-                                 ? sizeof(float4)
-                                 : sizeof(uchar4));
+    const size_t rowBytes = static_cast<size_t>(width)
+                          * (format == PixelFormat::RGBA32F ? sizeof(float4) : sizeof(uchar4));
 
-    CUDA_CHECK_TEXTURE(cudaMallocArray(&tex.gpuArray, &fmt, tex.width, tex.height));
+    CUDA_CHECK_TEXTURE(cudaMallocArray(&gpuArray, &fmt, width, height));
     CUDA_CHECK_TEXTURE(cudaMemcpy2DToArray(
-        tex.gpuArray, 0, 0,
-        tex.pixels.data(), rowBytes, rowBytes, tex.height,
+        gpuArray, 0, 0,
+        pixels.data(), rowBytes, rowBytes, height,
         cudaMemcpyHostToDevice));
 
-    cudaResourceDesc resDesc        = {};
-    resDesc.resType                 = cudaResourceTypeArray;
-    resDesc.res.array.array         = tex.gpuArray;
+    cudaResourceDesc resDesc       = {};
+    resDesc.resType                = cudaResourceTypeArray;
+    resDesc.res.array.array        = gpuArray;
 
-    CUDA_CHECK_TEXTURE(cudaCreateTextureObject(&tex.gpuTex, &resDesc, &texDesc, nullptr));
+    CUDA_CHECK_TEXTURE(cudaCreateTextureObject(&gpuTex, &resDesc, &texDesc, nullptr));
 }
 
-// ─── freeTexture ─────────────────────────────────────────────────────────────
+// ─── Texture::free ───────────────────────────────────────────────────────────
 
-void freeTexture(Texture& tex)
+void Texture::free()
 {
-    if (tex.cdfConditional) { cudaFree(reinterpret_cast<void*>(tex.cdfConditional)); tex.cdfConditional = 0; }
-    if (tex.cdfMarginal)    { cudaFree(reinterpret_cast<void*>(tex.cdfMarginal));    tex.cdfMarginal    = 0; }
-    if (tex.gpuTex)         { cudaDestroyTextureObject(tex.gpuTex);                  tex.gpuTex         = 0; }
-    if (tex.gpuArray)       { cudaFreeArray(tex.gpuArray);                           tex.gpuArray       = nullptr; }
+    if (cdfConditional) { cudaFree(reinterpret_cast<void*>(cdfConditional)); cdfConditional = 0; }
+    if (cdfMarginal)    { cudaFree(reinterpret_cast<void*>(cdfMarginal));    cdfMarginal    = 0; }
+    if (gpuTex)         { cudaDestroyTextureObject(gpuTex);                  gpuTex         = 0; }
+    if (gpuArray)       { cudaFreeArray(gpuArray);                           gpuArray       = nullptr; }
 }
 
-// ─── loadEXR ─────────────────────────────────────────────────────────────────
+// ─── Texture::loadEXR ────────────────────────────────────────────────────────
 
-bool loadEXR(const std::string& path, Texture& tex, std::string& outError)
+bool Texture::loadEXR(const std::string& path, std::string& outError)
 {
     float*      rgba   = nullptr;
-    int         width  = 0;
-    int         height = 0;
+    int         w      = 0;
+    int         h      = 0;
     const char* err    = nullptr;
 
-    const int ret = LoadEXR(&rgba, &width, &height, path.c_str(), &err);
+    const int ret = LoadEXR(&rgba, &w, &h, path.c_str(), &err);
     if (ret != TINYEXR_SUCCESS)
     {
         outError = err ? std::string(err) : "unknown EXR error";
@@ -103,15 +143,92 @@ bool loadEXR(const std::string& path, Texture& tex, std::string& outError)
         return false;
     }
 
-    // LoadEXR always returns 4 floats per pixel (RGBA); copy into raw byte storage.
-    const size_t byteCount = static_cast<size_t>(width) * height * sizeof(float4);
-    tex.pixels.resize(byteCount);
-    std::memcpy(tex.pixels.data(), rgba, byteCount);
-    free(rgba);  // tinyexr uses malloc
+    const size_t byteCount = static_cast<size_t>(w) * h * sizeof(float4);
+    pixels.resize(byteCount);
+    std::memcpy(pixels.data(), rgba, byteCount);
+    ::free(rgba);  // tinyexr uses malloc; :: avoids ambiguity with Texture::free
 
-    tex.format = PixelFormat::RGBA32F;
-    tex.width  = width;
-    tex.height = height;
+    format = PixelFormat::RGBA32F;
+    width  = w;
+    height = h;
 
     return true;
+}
+
+// ─── buildCdf ─────────────────────────────────────────────────────────────────
+
+void Texture::buildCdf()
+{
+    if (!isHdr() || pixels.empty())
+        return;
+
+    const int    W   = width;
+    const int    H   = height;
+    const float* src = floatPixels();  // RGBA32F, row-major
+
+    // ── Per-pixel weight = luminance(RGB) × sin(θ) ───────────────────────────
+    std::vector<float> weights(static_cast<size_t>(H) * W);
+    std::vector<float> rowSums(H, 0.f);
+
+    for (int j = 0; j < H; ++j)
+    {
+        const float theta    = (j + 0.5f) / static_cast<float>(H) * 3.14159265358979f;
+        const float sinTheta = sinf(theta);
+
+        for (int i = 0; i < W; ++i)
+        {
+            const float* p   = src + (j * W + i) * 4;
+            const float  lum = 0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2];
+            const float  w   = fmaxf(0.f, lum) * sinTheta;
+            weights[j * W + i] = w;
+            rowSums[j] += w;
+        }
+    }
+
+    // ── Conditional CDF per row (prefix-sum, normalised to [0,1]) ────────────
+    std::vector<float> conditionalCdf(static_cast<size_t>(H) * W);
+
+    for (int j = 0; j < H; ++j)
+    {
+        const float invRow = (rowSums[j] > 0.f) ? 1.f / rowSums[j] : 0.f;
+        float running = 0.f;
+        for (int i = 0; i < W; ++i)
+        {
+            running += weights[j * W + i];
+            conditionalCdf[j * W + i] = (rowSums[j] > 0.f)
+                ? running * invRow
+                : (i + 1.f) / static_cast<float>(W);
+        }
+        conditionalCdf[j * W + (W - 1)] = 1.f;  // prevent binary-search overrun
+    }
+
+    // ── Marginal CDF (prefix-sum over rows, normalised to [0,1]) ─────────────
+    std::vector<float> marginalCdf(H);
+    float totalWeight = 0.f;
+    for (int j = 0; j < H; ++j)
+        totalWeight += rowSums[j];
+
+    {
+        float running = 0.f;
+        for (int j = 0; j < H; ++j)
+        {
+            running += rowSums[j];
+            marginalCdf[j] = (totalWeight > 0.f)
+                ? running / totalWeight
+                : (j + 1.f) / static_cast<float>(H);
+        }
+        marginalCdf[H - 1] = 1.f;
+    }
+
+    // ── Upload to device ──────────────────────────────────────────────────────
+    const size_t marginalBytes    = static_cast<size_t>(H) * sizeof(float);
+    const size_t conditionalBytes = static_cast<size_t>(H) * W * sizeof(float);
+
+    CUDA_CHECK_TEXTURE(cudaMalloc(reinterpret_cast<void**>(&cdfMarginal),    marginalBytes));
+    CUDA_CHECK_TEXTURE(cudaMalloc(reinterpret_cast<void**>(&cdfConditional), conditionalBytes));
+
+    CUDA_CHECK_TEXTURE(cudaMemcpy(reinterpret_cast<void*>(cdfMarginal),
+                                   marginalCdf.data(),    marginalBytes,    cudaMemcpyHostToDevice));
+    CUDA_CHECK_TEXTURE(cudaMemcpy(reinterpret_cast<void*>(cdfConditional),
+                                   conditionalCdf.data(), conditionalBytes, cudaMemcpyHostToDevice));
 }
