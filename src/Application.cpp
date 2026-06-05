@@ -193,6 +193,7 @@ void Application::initImGui()
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
     style.Colors[ImGuiCol_WindowBg] = ImVec4(0.02f, 0.04f, 0.07f, 0.94f);
+    style.Colors[ImGuiCol_Header] = ImVec4(0.088f, 0.172f, 0.275f, 1.000f);
     style.FrameRounding = 4.0f;
     style.WindowRounding = 8.0f;
     style.GrabRounding = 4.0f;
@@ -201,7 +202,7 @@ void Application::initImGui()
     style.ItemSpacing = ImVec2(8.0f, 4.0f);
     style.IndentSpacing = 16.0f;
     style.TreeLinesFlags = ImGuiTreeNodeFlags_DrawLinesFull;
-
+    
     m_vkCtx.initImGui(m_window, m_vkCtx.swapchainImageCount());
 }
 void Application::initCuda()
@@ -1057,7 +1058,7 @@ bool Application::tick()
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();  // must be called once per frame, right after ImGui::NewFrame()
-
+    ImGui::ShowDemoWindow();
     // Camera input is processed here — after NewFrame() so WantCaptureMouse /
     // WantCaptureKeyboard are current, but before the GPU launch so this frame
     // renders with the updated camera.
@@ -1557,79 +1558,105 @@ bool Application::tick()
 
     ImGui::End();
 
-    // ── Materials panel ───────────────────────────────────────────────────────
-    ImGui::Begin("Materials");
+    // ── Resources panel ───────────────────────────────────────────────────────
+    ImGui::Begin("Resources");
 
-    auto& mats = m_scene->materials();
-    bool anyMatChanged = false;
+    // ── Materials ─────────────────────────────────────────────────────────────
+    {
+        auto& mats = m_scene->materials();
+        const std::string matsHeader = "Materials (" + std::to_string(mats.size()) + ")";
+        bool anyMatChanged = false;
 
-    if (mats.empty())
-    {
-        ImGui::TextDisabled("No materials loaded");
-    }
-    else
-    {
-        for (int i = 0; i < static_cast<int>(mats.size()); ++i)
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 8.0f));
+        const bool matsOpen = ImGui::CollapsingHeader(matsHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        ImGui::PopStyleVar();
+        if (matsOpen)
         {
-            ImGui::PushID(i);
-
-            const std::string& rawName = m_scene->materialName(i);
-            const std::string  header  = rawName.empty()
-                                       ? ("Material " + std::to_string(i))
-                                       : rawName;
-
-            if (ImGui::CollapsingHeader(header.c_str()))
+            if (mats.empty())
             {
-                if (ImGui::ColorEdit3("Albedo",   &mats[i].albedo.x, ImGuiColorEditFlags_Float))
+                ImGui::TextDisabled("No materials loaded");
+            }
+            else
+            {
+                for (int i = 0; i < static_cast<int>(mats.size()); ++i)
                 {
-                    anyMatChanged = true;
-                }
-                if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.0f, 1.0f))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.0f, 1.0f))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::ColorEdit3("Emission",  &mats[i].emission.x))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale, 0.1f, 0.0f, 1000.0f, "%.2f"))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::SliderFloat("Transmission", &mats[i].transmission, 0.0f, 1.0f, "%.3f"))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::SliderFloat("IOR",          &mats[i].ior,          1.0f, 3.0f, "%.3f"))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::DragFloat("Absorption Dist.", &mats[i].absorptionDistance, 0.002f, 0.0001f, 1000.0f, "%.4f"))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::SliderFloat("Clearcoat",      &mats[i].clearcoat,          0.0f, 1.0f, "%.3f"))
-                {
-                    anyMatChanged = true;
-                }
-                if (ImGui::SliderFloat("Coat Roughness", &mats[i].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
-                {
-                    anyMatChanged = true;
+                    ImGui::PushID(i);
+
+                    const std::string& rawName = m_scene->materialName(i);
+                    const std::string  header  = rawName.empty()
+                                               ? ("Material " + std::to_string(i))
+                                               : rawName;
+
+                    if (ImGui::CollapsingHeader(header.c_str()))
+                    {
+                        if (ImGui::ColorEdit3("Albedo",   &mats[i].albedo.x, ImGuiColorEditFlags_Float))
+                            anyMatChanged = true;
+                        if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.0f, 1.0f))
+                            anyMatChanged = true;
+                        if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.0f, 1.0f))
+                            anyMatChanged = true;
+                        if (ImGui::ColorEdit3("Emission",  &mats[i].emission.x))
+                            anyMatChanged = true;
+                        if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale, 0.1f, 0.0f, 1000.0f, "%.2f"))
+                            anyMatChanged = true;
+                        if (ImGui::SliderFloat("Transmission", &mats[i].transmission, 0.0f, 1.0f, "%.3f"))
+                            anyMatChanged = true;
+                        if (ImGui::SliderFloat("IOR",          &mats[i].ior,          1.0f, 3.0f, "%.3f"))
+                            anyMatChanged = true;
+                        if (ImGui::DragFloat("Absorption Dist.", &mats[i].absorptionDistance, 0.002f, 0.0001f, 1000.0f, "%.4f"))
+                            anyMatChanged = true;
+                        if (ImGui::SliderFloat("Clearcoat",      &mats[i].clearcoat,          0.0f, 1.0f, "%.3f"))
+                            anyMatChanged = true;
+                        if (ImGui::SliderFloat("Coat Roughness", &mats[i].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
+                            anyMatChanged = true;
+                    }
+
+                    ImGui::PopID();
                 }
             }
+        }
 
-            ImGui::PopID();
+        if (anyMatChanged)
+        {
+            uploadMaterials();
+            m_accumDirty = true;
         }
     }
 
-    if (anyMatChanged)
+    // ── Textures ──────────────────────────────────────────────────────────────
+    ImGui::Separator();
     {
-        uploadMaterials();
-        m_accumDirty = true;
+        const auto& textures  = m_scene->textures();
+        const std::string texHeader = "Textures (" + std::to_string(textures.size()) + ")";
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 8.0f));
+        const bool texOpen = ImGui::CollapsingHeader(texHeader.c_str());
+        ImGui::PopStyleVar();
+        if (texOpen)
+        {
+            if (textures.empty())
+            {
+                ImGui::TextDisabled("No textures loaded");
+            }
+            else
+            {
+                for (int i = 0; i < static_cast<int>(textures.size()); ++i)
+                {
+                    const Texture& tex = textures[i];
+                    const std::string label = tex.name.empty()
+                        ? ("Texture " + std::to_string(i))
+                        : tex.name;
+
+                    ImGui::PushID(i);
+                    ImGui::Bullet();
+                    ImGui::Text("%-32s  %d \xc3\x97 %d  %s",
+                        label.c_str(),
+                        tex.width, tex.height,
+                        tex.format == PixelFormat::RGBA32F ? "RGBA32F" : "RGBA8");
+                    ImGui::PopID();
+                }
+            }
+        }
     }
 
     ImGui::End();
