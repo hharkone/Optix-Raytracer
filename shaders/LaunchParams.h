@@ -5,6 +5,7 @@
 #ifndef OPTIX_RAYTRACER_LAUNCH_PARAMS_H
 #define OPTIX_RAYTRACER_LAUNCH_PARAMS_H
 
+#include <stdint.h>        // uint32_t and friends (safe in both host and device code)
 #include <optix.h>         // OptixTraversableHandle
 #include <cuda_runtime.h>  // uchar4, uint2
 #include "SceneData.h"     // MaterialData

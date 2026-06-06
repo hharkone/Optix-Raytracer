@@ -55,16 +55,53 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 | [NVIDIA OptiX SDK](https://developer.nvidia.com/optix) | 9.1.0 | Free download; requires NVIDIA developer account |
 | [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) | 12.x or 13.x | Installs `nvcc` and CUDA runtime |
 | [Vulkan SDK](https://vulkan.lunarg.com/) | ≥ 1.3 | Installs headers, loader, and validation layers |
-| [Visual Studio 2022](https://visualstudio.microsoft.com/) | 17.x | With **Desktop development with C++** and **CUDA** workloads |
+| **Windows:** [Visual Studio 2022](https://visualstudio.microsoft.com/) | 17.x | With **Desktop development with C++** and **CUDA** workloads |
+| **Linux:** GCC | ≤ 15 | CUDA 13.x does not support GCC 16+; install `gcc15`/`g++15` alongside the system compiler |
 | [CMake](https://cmake.org/download/) | ≥ 3.20 | Add to PATH during install |
+| **Linux:** Ninja *(optional)* | any | Used automatically if present; falls back to Unix Makefiles |
 
 > **Driver check**: Run `nvidia-smi`. The driver version appears top-right. If below 570, download the latest from [nvidia.com/drivers](https://www.nvidia.com/drivers).
 
-> **Vulkan check**: Run `vulkaninfo` (installed with the Vulkan SDK). If absent, install the [Vulkan SDK](https://vulkan.lunarg.com/) and ensure `VULKAN_SDK` is set in your environment.
+> **Vulkan check**: Run `vulkaninfo`. If absent, install Vulkan headers and the loader — on Arch: `sudo pacman -S vulkan-icd-loader vulkan-headers`; ensure `VULKAN_SDK` is set if using the LunarG SDK tarball.
 
 ---
 
 ## Building
+
+### Linux (Arch / other distros)
+
+`build.sh` in the repository root handles configure and build in one step. It automatically selects `g++-15` as the compiler when available (required for CUDA 13.x compatibility) and picks Ninja if installed.
+
+```bash
+# First time: add CUDA to PATH
+echo 'export PATH="/opt/cuda/bin:$PATH"' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH="/opt/cuda/lib64:$LD_LIBRARY_PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Build (Release by default)
+./build.sh
+
+# Debug build
+./build.sh Debug
+
+# Force a clean reconfigure (required when changing compiler or generator)
+./build.sh --clean
+
+# If OptiX is not auto-detected:
+./build.sh -DOptiX_INSTALL_DIR=~/NVIDIA-OptiX-SDK-9.1.0
+# or: export OptiX_INSTALL_DIR=~/NVIDIA-OptiX-SDK-9.1.0
+```
+
+On first run, CMake fetches GLFW, ImGui, ImGuizmo, tinygltf, tinyexr, and nativefiledialog-extended from GitHub — internet access is required.
+
+**Run:**
+```bash
+./build/bin/Release/OptixRaytracer
+```
+
+---
+
+### Windows
 
 Two batch scripts are provided in the repository root:
 
@@ -73,16 +110,14 @@ Two batch scripts are provided in the repository root:
 | `configure.bat` | Generate (or refresh) the Visual Studio solution |
 | `build.bat` | Configure if needed, then compile |
 
-### Command line
+**Command line:**
 
 ```bat
 build.bat          :: Debug build (configures automatically on first run)
 build.bat Release  :: Release build
 ```
 
-On first run, CMake fetches GLFW, ImGui, ImGuizmo, tinygltf, tinyexr, and nativefiledialog-extended from GitHub — internet access is required. The Vulkan SDK must already be installed and discoverable via `find_package(Vulkan)`. Delete `build\CMakeCache.txt` to force a full reconfigure.
-
-### Visual Studio
+**Visual Studio:**
 
 ```bat
 configure.bat          :: Generate build\OptixRaytracer.sln
@@ -91,7 +126,7 @@ configure.bat --clean  :: Wipe CMake cache first, then regenerate
 
 Open `build\OptixRaytracer.sln`. **OptixRaytracer** is the startup project — press **F5** to run. Re-run `configure.bat` after adding/removing source files or changing `CMakeLists.txt`.
 
-### Manual CMake
+**Manual CMake:**
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
@@ -104,7 +139,7 @@ cmake --build build --config Debug   --parallel
 cmake --build build --config Release --parallel
 ```
 
-### Run
+**Run:**
 
 ```powershell
 .\build\bin\Debug\OptixRaytracer.exe
@@ -138,7 +173,8 @@ cmake --build build --config Release --parallel
 ```
 Optix-Raytracer/
 ├── CMakeLists.txt              Root build: project settings, FetchContent, subdirs
-├── build.bat / configure.bat   Convenience build scripts
+├── build.sh                    Linux build script (configure + compile)
+├── build.bat / configure.bat   Windows build scripts
 ├── imgui.ini                   Versioned default Dear ImGui window layout
 ├── app.PNG                     Application screenshot
 ├── cmake/
@@ -174,18 +210,29 @@ Optix-Raytracer/
 ## Troubleshooting
 
 **`OptiX SDK not found`**  
-Add `-DOptiX_INSTALL_DIR=...` to the CMake configure command. The SDK defaults to `C:/ProgramData/NVIDIA Corporation/OptiX SDK <version>`.
+Pass `-DOptiX_INSTALL_DIR=...` to the CMake configure command, or set the environment variable `OptiX_INSTALL_DIR`.  
+- Windows default: `C:/ProgramData/NVIDIA Corporation/OptiX SDK <version>`  
+- Linux: `~/NVIDIA-OptiX-SDK-<version>`
 
 **`optixInit() failed` or crash on startup**  
 Your NVIDIA driver is too old. Update to ≥ 570.x from [nvidia.com/drivers](https://www.nvidia.com/drivers).
 
-**`nvcc` not found during configure**  
+**`nvcc` not found during configure (Linux)**  
+CUDA Toolkit is not on PATH. Add `/opt/cuda/bin` to `PATH` in `~/.bashrc` (see build instructions above).
+
+**`nvcc` not found during configure (Windows)**  
 CUDA Toolkit is not on PATH. Reinstall CUDA Toolkit and ensure it is added to PATH, or open the project from a **Visual Studio Developer Command Prompt**.
 
-**`CUDA : error : Cannot find compiler 'cl.exe'`**  
+**`CUDA : error : Cannot find compiler 'cl.exe'`** *(Windows)*  
 Visual Studio C++ workload is missing. Open the VS Installer, modify the 2022 installation, and add **Desktop development with C++**.
 
-**`Vulkan SDK not found` during configure**  
+**`fatal error: math.h: No such file or directory` or similar STL errors (Linux)**  
+GCC 16+ is not supported by CUDA 13.x. Install `gcc15`/`g++15` — on Arch: `sudo pacman -S gcc15`. `build.sh` selects it automatically when present.
+
+**`Vulkan SDK not found` during configure (Linux)**  
+Install Vulkan headers and the ICD loader: `sudo pacman -S vulkan-icd-loader vulkan-headers` (Arch), then re-run `./build.sh --clean`.
+
+**`Vulkan SDK not found` during configure (Windows)**  
 Install the [Vulkan SDK](https://vulkan.lunarg.com/) and ensure the `VULKAN_SDK` environment variable is set (the installer does this automatically). Re-run `configure.bat` after installation.
 
 **Black Viewport on startup**  

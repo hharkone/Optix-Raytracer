@@ -1,6 +1,6 @@
 # FindOptiX.cmake
 # ───────────────
-# Locates NVIDIA OptiX SDK (7.x / 8.x / 9.x) on Windows.
+# Locates NVIDIA OptiX SDK (7.x / 8.x / 9.x) on Windows and Linux.
 #
 # Variables that influence the search (in priority order):
 #   OptiX_INSTALL_DIR  — CMake cache variable  (-DOptiX_INSTALL_DIR=...)
@@ -21,13 +21,24 @@ if(DEFINED OptiX_INSTALL_DIR)
     set(_optix_search_roots "${OptiX_INSTALL_DIR}")
 elseif(DEFINED ENV{OptiX_INSTALL_DIR})
     set(_optix_search_roots "$ENV{OptiX_INSTALL_DIR}")
-else()
+elseif(WIN32)
     # Auto-discover: glob all "OptiX SDK *" directories under ProgramData
     file(GLOB _optix_candidates
         LIST_DIRECTORIES TRUE
         "C:/ProgramData/NVIDIA Corporation/OptiX SDK *"
     )
     # Sort descending so the newest version wins
+    list(SORT _optix_candidates ORDER DESCENDING)
+    set(_optix_search_roots ${_optix_candidates})
+else()
+    # Linux auto-discover: check common install locations
+    file(GLOB _optix_candidates
+        LIST_DIRECTORIES TRUE
+        "$ENV{HOME}/NVIDIA-OptiX-SDK-*"
+        "/opt/NVIDIA-OptiX-SDK-*"
+        "/opt/optix*"
+        "/usr/local/optix*"
+    )
     list(SORT _optix_candidates ORDER DESCENDING)
     set(_optix_search_roots ${_optix_candidates})
 endif()
@@ -69,7 +80,8 @@ find_package_handle_standard_args(OptiX
     REQUIRED_VARS OptiX_INCLUDE_DIR
     VERSION_VAR   OptiX_VERSION
     FAIL_MESSAGE  "OptiX SDK not found. Set OptiX_INSTALL_DIR to the SDK root \
-(e.g. -DOptiX_INSTALL_DIR=\"C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0\")"
+(Windows: -DOptiX_INSTALL_DIR=\"C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0\" \
+ Linux:   -DOptiX_INSTALL_DIR=~/NVIDIA-OptiX-SDK-9.1.0 or export OptiX_INSTALL_DIR=...)"
 )
 
 # ── 5. Create imported target ─────────────────────────────────────────────────
