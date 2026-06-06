@@ -80,39 +80,49 @@ void VulkanContext::init(GLFWwindow* window, int width, int height)
         throw std::runtime_error("Failed to create Vulkan window surface");
     }
 
-    // 5. Physical device — first GPU with graphics + present queue
+    // 5. Physical device — prefer discrete GPU; fall back to any with graphics + present queue
     uint32_t devCount = 0;
     vkEnumeratePhysicalDevices(m_instance, &devCount, nullptr);
     std::vector<VkPhysicalDevice> devs(devCount);
     vkEnumeratePhysicalDevices(m_instance, &devCount, devs.data());
 
-    for (auto& pd : devs)
+    auto pickQueueFamily = [&](VkPhysicalDevice pd) -> int
     {
         uint32_t qfCount = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(pd, &qfCount, nullptr);
         std::vector<VkQueueFamilyProperties> qfProps(qfCount);
         vkGetPhysicalDeviceQueueFamilyProperties(pd, &qfCount, qfProps.data());
-
         for (uint32_t i = 0; i < qfCount; ++i)
         {
             VkBool32 presentOk = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, m_surface, &presentOk);
             if ((qfProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && presentOk)
-            {
-                m_physDevice  = pd;
-                m_queueFamily = i;
-                break;
-            }
+                return static_cast<int>(i);
         }
-        if (m_physDevice != VK_NULL_HANDLE)
+        return -1;
+    };
+
+    // First pass: discrete GPU only
+    for (auto& pd : devs)
+    {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(pd, &props);
+        if (props.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+            continue;
+        int qf = pickQueueFamily(pd);
+        if (qf >= 0) { m_physDevice = pd; m_queueFamily = static_cast<uint32_t>(qf); break; }
+    }
+    // Second pass: any suitable device (integrated, virtual, etc.)
+    if (m_physDevice == VK_NULL_HANDLE)
+    {
+        for (auto& pd : devs)
         {
-            break;
+            int qf = pickQueueFamily(pd);
+            if (qf >= 0) { m_physDevice = pd; m_queueFamily = static_cast<uint32_t>(qf); break; }
         }
     }
     if (m_physDevice == VK_NULL_HANDLE)
-    {
         throw std::runtime_error("No suitable Vulkan physical device found");
-    }
 
     // 6. Logical device + queue
     const float qPriority = 1.0f;

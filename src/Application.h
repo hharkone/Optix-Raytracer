@@ -154,6 +154,9 @@ private:
     float  m_moveSpeed = 5.0f;
     float  m_rotSpeed  = 0.003f;
 
+    // Set by the GLFW framebuffer-size callback; consumed at the top of tick().
+    bool m_swapchainResizePending = false;
+
     // Input state
     double m_prevMouseX      = 0.0;
     double m_prevMouseY      = 0.0;

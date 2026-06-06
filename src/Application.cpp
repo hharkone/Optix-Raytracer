@@ -158,7 +158,11 @@ Application::~Application()
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
-    // m_vkCtx destructor (VulkanContext::cleanup()) runs as Application is destroyed
+    // Explicitly clean up Vulkan before destroying the GLFW window.  The m_vkCtx
+    // member destructor would do this automatically, but member destructors run
+    // *after* the destructor body — by which point glfwDestroyWindow has torn down
+    // the underlying wl_surface, causing the Nvidia driver to crash in destroySwapchain.
+    m_vkCtx.cleanup();
 
     if (m_window) { glfwDestroyWindow(m_window); m_window = nullptr; }
     glfwTerminate();
@@ -175,11 +179,26 @@ void Application::initWindow(const std::string& title)
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // no OpenGL context — Vulkan owns presentation
 
+    // On Wayland HiDPI the default GLFW_SCALE_FRAMEBUFFER=TRUE makes glfwGetFramebufferSize
+    // return physical pixels while glfwGetCursorPos stays in logical pixels, causing a growing
+    // coordinate mismatch (worse toward bottom-right).  Disabling it puts everything in logical-
+    // pixel space; the compositor handles upscaling transparently.
+    // On other platforms (Win32, macOS, X11) TRUE is correct: the swapchain should match
+    // the monitor's physical resolution, so we only disable it on Wayland.
+    if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
+        glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, GLFW_FALSE);
+
     m_window = glfwCreateWindow(m_width, m_height, title.c_str(), nullptr, nullptr);
     if (!m_window)
     {
         throw std::runtime_error("Failed to create GLFW window");
     }
+
+    glfwSetWindowUserPointer(m_window, this);
+    glfwSetFramebufferSizeCallback(m_window, [](GLFWwindow* win, int /*w*/, int /*h*/)
+    {
+        static_cast<Application*>(glfwGetWindowUserPointer(win))->m_swapchainResizePending = true;
+    });
 }
 
 // ─── ImGui initialisation ────────────────────────────────────────────────────
@@ -997,6 +1016,18 @@ bool Application::tick()
     }
 
     glfwPollEvents();
+
+    if (m_swapchainResizePending)
+    {
+        int fw, fh;
+        glfwGetFramebufferSize(m_window, &fw, &fh);
+        if (fw > 0 && fh > 0)
+        {
+            m_vkCtx.waitIdle();
+            m_vkCtx.recreateSwapchain(fw, fh);
+        }
+        m_swapchainResizePending = false;
+    }
 
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
