@@ -126,13 +126,17 @@ void HdriBrowser::generateThumbnail(const float* src, int srcW, int srcH,
                                     uint8_t* dst, int dstW, int dstH)
 {
     // ── Log-average luminance for auto-exposure ───────────────────────────────
+    // Sanitise non-finite source values (NaN / inf from over-exposed HDR pixels)
+    // before computing the geometric-mean luminance.  Both fmaxf and log would
+    // propagate inf → logAvgLum = inf → exposure = 0 → black thumbnail.
     double logSum = 0.0;
     const int totalPx = srcW * srcH;
     for (int i = 0; i < totalPx; ++i)
     {
-        const float lum = 0.2126f * src[i * 4 + 0]
-                        + 0.7152f * src[i * 4 + 1]
-                        + 0.0722f * src[i * 4 + 2];
+        const float rc  = std::isfinite(src[i * 4 + 0]) ? src[i * 4 + 0] : 0.0f;
+        const float gc  = std::isfinite(src[i * 4 + 1]) ? src[i * 4 + 1] : 0.0f;
+        const float bc  = std::isfinite(src[i * 4 + 2]) ? src[i * 4 + 2] : 0.0f;
+        const float lum = 0.2126f * rc + 0.7152f * gc + 0.0722f * bc;
         logSum += std::log(static_cast<double>(std::fmax(lum, 1e-4f)));
     }
     const float logAvgLum = static_cast<float>(std::exp(logSum / totalPx));
@@ -159,7 +163,12 @@ void HdriBrowser::generateThumbnail(const float* src, int srcW, int srcH,
                 for (int sx = sx0; sx < sx1; ++sx)
                 {
                     const float* p = src + (static_cast<size_t>(sy) * srcW + sx) * 4;
-                    r += p[0]; g += p[1]; b += p[2]; ++n;
+                    // Guard against NaN/inf: treat non-finite values as 0 so
+                    // the box-filter average stays finite for Reinhard tone-mapping.
+                    r += std::isfinite(p[0]) ? p[0] : 0.0f;
+                    g += std::isfinite(p[1]) ? p[1] : 0.0f;
+                    b += std::isfinite(p[2]) ? p[2] : 0.0f;
+                    ++n;
                 }
             }
             if (n > 0)
