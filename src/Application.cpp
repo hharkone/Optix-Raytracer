@@ -759,11 +759,13 @@ void Application::loadTexture(const std::string& path)
     tex.name = std::filesystem::path(path).filename().string();
     std::string err;
 
-    // Dispatch on file extension: EXR uses tinyexr, everything else uses stb_image.
+    // Dispatch on file extension.
     const std::string ext = std::filesystem::path(path).extension().string();
     const bool ok = (ext == ".exr" || ext == ".EXR")
         ? tex.loadEXR(path, err)
-        : tex.loadImage(path, err);
+        : (ext == ".hdr" || ext == ".HDR")
+            ? tex.loadHDR(path, err)
+            : tex.loadImage(path, err);
 
     if (!ok)
     {
@@ -785,7 +787,14 @@ void Application::loadEnvMap(const std::string& path)
     m_envMap.free();  // release old GPU resources before loading new map
     m_envMapPath.clear();
 
-    if (m_envMap.loadEXR(path, m_envMapError))
+    const std::string ext = std::filesystem::path(path).extension().string();
+    const bool isHdr = (ext == ".hdr" || ext == ".HDR");
+
+    const bool ok = isHdr
+        ? m_envMap.loadHDR(path, m_envMapError)
+        : m_envMap.loadEXR(path, m_envMapError);
+
+    if (ok)
     {
         m_envMap.uploadToGpu();
         m_envMap.buildCdf();
@@ -1404,10 +1413,10 @@ bool Application::tick()
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("Open EXR..."))
+    if (ImGui::Button("Open Env Map..."))
     {
         nfdu8char_t*    outPath = nullptr;
-        nfdfilteritem_t filters[] = { { "EXR Image", "exr" } };
+        nfdfilteritem_t filters[] = { { "HDR Image", "exr,hdr" } };
         if (NFD_OpenDialogU8(&outPath, filters, 1, nullptr) == NFD_OKAY)
         {
             loadEnvMap(reinterpret_cast<const char*>(outPath));
@@ -1417,7 +1426,7 @@ bool Application::tick()
     if (m_envMap.gpuTex != 0)
     {
         ImGui::SameLine();
-        if (ImGui::Button("Clear EXR"))
+        if (ImGui::Button("Clear"))
         {
             m_envMap.free();
             m_envMapPath.clear();
@@ -1455,7 +1464,7 @@ bool Application::tick()
     else if (!m_envMapError.empty())
     {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-                           "EXR error: %s", m_envMapError.c_str());
+                           "Error: %s", m_envMapError.c_str());
     }
     else
     {
@@ -1691,7 +1700,7 @@ bool Application::tick()
             if (ImGui::Button("Load Image..."))
             {
                 nfdu8char_t* outPath = nullptr;
-                nfdfilteritem_t filters[] = { { "Image Files", "png,jpg,jpeg,bmp,tga,exr" } };
+                nfdfilteritem_t filters[] = { { "Image Files", "png,jpg,jpeg,bmp,tga,exr,hdr" } };
                 if (NFD_OpenDialogU8(&outPath, filters, 1, nullptr) == NFD_OKAY)
                 {
                     loadTexture(reinterpret_cast<const char*>(outPath));

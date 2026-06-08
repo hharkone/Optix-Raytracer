@@ -1,20 +1,18 @@
-// Texture.cpp — unified LDR/HDR texture: GPU upload and EXR loading.
+// Texture.cpp — unified LDR/HDR/EXR texture: GPU upload and image loading.
 //
-// TINYEXR_IMPLEMENTATION must appear in exactly ONE translation unit.
-// This file is that unit — do not define it elsewhere.
+// EXR loading uses OpenEXR — all compression types are supported:
+//   NONE, RLE, ZIPS, ZIP, PIZ, PXR24, B44, B44A, DWAA, DWAB.
 //
-// TINYEXR_USE_MINIZ pulls in the bundled miniz single-header for zlib
-// decompression so no external zlib install is required.
-// TINYEXR_USE_THREAD enables parallel scanline decoding via std::thread.
-#define TINYEXR_IMPLEMENTATION
-#define TINYEXR_USE_MINIZ  1
-#define TINYEXR_USE_THREAD 1
-#include <tinyexr.h>
-
+// HDR (Radiance RGBE .hdr) loading uses stb_image (stbi_loadf), which
+// decodes the RGBE encoding to linear float values directly.
+//
 // stb_image: the implementation is compiled in SceneLoader.cpp via
 // #define STB_IMAGE_IMPLEMENTATION before #include <tiny_gltf.h>.
 // We only need the function declarations here.
 #include <stb_image.h>
+
+#include <ImfRgbaFile.h>
+#include <ImfArray.h>
 
 #include "Texture.h"
 
@@ -135,28 +133,71 @@ void Texture::free()
 
 bool Texture::loadEXR(const std::string& path, std::string& outError)
 {
-    float*      rgba   = nullptr;
-    int         w      = 0;
-    int         h      = 0;
-    const char* err    = nullptr;
-
-    const int ret = LoadEXR(&rgba, &w, &h, path.c_str(), &err);
-    if (ret != TINYEXR_SUCCESS)
+    try
     {
-        outError = err ? std::string(err) : "unknown EXR error";
-        FreeEXRErrorMessage(err);
+        Imf::RgbaInputFile file(path.c_str());
+        const Imath::Box2i dw = file.dataWindow();
+        const int w = dw.max.x - dw.min.x + 1;
+        const int h = dw.max.y - dw.min.y + 1;
+
+        // Read scanlines into a temporary half-float RGBA buffer.
+        Imf::Array2D<Imf::Rgba> buf(h, w);
+        file.setFrameBuffer(&buf[0][0] - dw.min.x - dw.min.y * w, 1, w);
+        file.readPixels(dw.min.y, dw.max.y);
+
+        // Convert half4 → float4 and store as raw bytes in pixels.
+        const size_t pixelCount = static_cast<size_t>(w) * h;
+        pixels.resize(pixelCount * sizeof(float4));
+        float* dst = reinterpret_cast<float*>(pixels.data());
+
+        for (int j = 0; j < h; ++j)
+        {
+            for (int i = 0; i < w; ++i)
+            {
+                const Imf::Rgba& px = buf[j][i];
+                *dst++ = static_cast<float>(px.r);
+                *dst++ = static_cast<float>(px.g);
+                *dst++ = static_cast<float>(px.b);
+                *dst++ = static_cast<float>(px.a);
+            }
+        }
+
+        format = PixelFormat::RGBA32F;
+        width  = w;
+        height = h;
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        outError = e.what();
+        return false;
+    }
+}
+
+// ─── Texture::loadHDR ────────────────────────────────────────────────────────
+
+bool Texture::loadHDR(const std::string& path, std::string& outError)
+{
+    int w = 0, h = 0, channels = 0;
+    // stbi_loadf decodes RGBE encoding → linear float; requesting 4 channels
+    // always produces RGBA (alpha is filled with 1.0 since .hdr has no alpha).
+    float* data = stbi_loadf(path.c_str(), &w, &h, &channels, 4);
+    if (!data)
+    {
+        outError = stbi_failure_reason()
+                 ? stbi_failure_reason()
+                 : "unknown stb_image error";
         return false;
     }
 
     const size_t byteCount = static_cast<size_t>(w) * h * sizeof(float4);
     pixels.resize(byteCount);
-    std::memcpy(pixels.data(), rgba, byteCount);
-    ::free(rgba);  // tinyexr uses malloc; :: avoids ambiguity with Texture::free
+    std::memcpy(pixels.data(), data, byteCount);
+    stbi_image_free(data);
 
     format = PixelFormat::RGBA32F;
     width  = w;
     height = h;
-
     return true;
 }
 

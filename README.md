@@ -13,7 +13,7 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 - **PBR materials** (GGX-VNDF microfacet BRDF) — albedo, roughness, metallic, clearcoat, clearcoat roughness, emission, transmission, IOR, and absorption distance
 - **Probabilistic lobe selection** — clearcoat → specular → diffuse/refraction, each weighted by Fresnel probability for energy conservation
 - **Stochastic refraction** — rough dielectric transmission with Snell's law and GGX microfacet normal sampling; Beer-Lambert volumetric absorption for coloured glass
-- **Environment lighting** — equirectangular EXR maps or procedural sky gradient, with rotation and exposure (EV) controls
+- **Environment lighting** — equirectangular EXR maps (`.exr`, all codecs: NONE / RLE / ZIP / PIZ / PXR24 / B44 / DWAA / DWAB) or Radiance HDR maps (`.hdr`) or procedural sky gradient, with rotation and exposure (EV) controls
 - **HDRI importance sampling** — 2D luminance CDF built at load time; Next Event Estimation (NEE) fires shadow rays toward bright env-map regions at every diffuse bounce; Multiple Importance Sampling (MIS) power heuristic prevents double-counting with the regular BSDF path
 - **Thin-lens depth of field** — focal length, sensor size, f-stop, focus distance, and adjustable bokeh edge bias
 - **Reinhard tone mapping** with sRGB gamma encoding
@@ -92,7 +92,7 @@ source ~/.bashrc
 # or: export OptiX_INSTALL_DIR=~/NVIDIA-OptiX-SDK-9.1.0
 ```
 
-On first run, CMake fetches GLFW, ImGui, ImGuizmo, tinygltf, tinyexr, and nativefiledialog-extended from GitHub — internet access is required.
+On first run, CMake fetches GLFW, ImGui, ImGuizmo, tinygltf, Imath, OpenEXR, and nativefiledialog-extended from GitHub — internet access is required.
 
 **Run:**
 ```bash
@@ -163,8 +163,8 @@ cmake --build build --config Release --parallel
 | **1 / 2 / 3** | Keyboard shortcut: Scale / Rotate / Translate |
 | **Local / World buttons** | Switch gizmo reference space (Node Properties panel) |
 | **Open glTF…** | Browse for `.gltf` or `.glb` scene file |
-| **Open EXR…** | Browse for an equirectangular HDR environment map |
-| **Clear EXR** | Remove the environment map (falls back to procedural sky) |
+| **Open Env Map…** | Browse for an equirectangular environment map (`.exr` or `.hdr`) |
+| **Clear** | Remove the environment map (falls back to procedural sky) |
 
 ---
 
@@ -198,7 +198,8 @@ Optix-Raytracer/
     ├── Node3D.h                Node3D base + MeshNode, CameraNode, GroupNode
     ├── Scene.h/.cpp            Scene container: meshes, materials, textures, node tree
     ├── Mesh.h                  Host-side mesh: separate vertex attribute arrays
-    ├── Texture.h/.cpp          RAII GPU texture class: RGBA8 / RGBA32F, EXR loading,
+    ├── Texture.h/.cpp          RAII GPU texture class: RGBA8 / RGBA32F; EXR loading
+    │                           via OpenEXR (all codecs), HDR loading via stb_image,
     │                           GPU upload, HDRI importance-sampling CDF
     ├── Accel.h/.cpp            OptiX acceleration structure: BLAS per mesh + TLAS
     ├── SceneLoader.h/.cpp      glTF 2.0 loader (tinygltf); populates Scene from file

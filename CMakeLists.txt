@@ -23,8 +23,8 @@ set(CMAKE_CUDA_ARCHITECTURES 75 86 89)
 # ── Project ──────────────────────────────────────────────────────────────────
 project(OptixRaytracer
     VERSION 0.1.0
-    LANGUAGES CXX CUDA C  # C is needed for miniz (tinyexr); declared here so detection
-)                         # runs upfront rather than being triggered by GLFW's nested project()
+    LANGUAGES CXX CUDA C  # C declared upfront so detection runs before GLFW's nested project()
+)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -129,19 +129,32 @@ set(TINYGLTF_INSTALL              OFF CACHE BOOL "" FORCE)
 set(TINYGLTF_HEADER_ONLY          ON  CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(tinygltf)
 
-# tinyexr v1.0.9 — single-header EXR loader; bundles miniz for zlib decoding.
-# FetchContent_Populate (not MakeAvailable) downloads only — we do not process
-# tinyexr's CMakeLists because the library is header-only and we define
-# TINYEXR_IMPLEMENTATION ourselves in EnvMap.cpp.
-FetchContent_Declare(tinyexr
-    GIT_REPOSITORY https://github.com/syoyo/tinyexr.git
-    GIT_TAG        v1.0.9
+# Imath 3.1 — math types (half, Box2i, …) required by OpenEXR 3.x.
+# Must be fetched before OpenEXR so the Imath::Imath target is already in scope
+# when OpenEXR's CMakeLists checks 'if(NOT TARGET Imath::Imath)'.
+FetchContent_Declare(imath
+    GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/Imath.git
+    GIT_TAG        v3.1.12
     GIT_SHALLOW    TRUE
 )
-FetchContent_GetProperties(tinyexr)
-if(NOT tinyexr_POPULATED)
-    FetchContent_Populate(tinyexr)
-endif()
+set(IMATH_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(imath)
+
+# OpenEXR 3.3 — full EXR codec support: NONE, RLE, ZIPS, ZIP, PIZ,
+#               PXR24, B44, B44A, DWAA, DWAB (replaces tinyexr).
+# Imath::Imath is already in CMake scope from above, so OpenEXR's
+# find_package(Imath) guard is satisfied without a separate install step.
+FetchContent_Declare(openexr
+    GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/openexr.git
+    GIT_TAG        v3.3.3
+    GIT_SHALLOW    TRUE
+)
+set(OPENEXR_INSTALL          OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_TOOLS      OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_EXAMPLES   OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_TOOLS    OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(openexr)
 
 # nativefiledialog-extended v1.2.1 — native OS file dialog (Open / Save)
 FetchContent_Declare(nfd

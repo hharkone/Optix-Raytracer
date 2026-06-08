@@ -16,16 +16,11 @@ add_executable(OptixRaytracer
     Texture.cpp
     SceneLoader.h
     SceneLoader.cpp
-    # miniz (tinyexr's bundled zlib) — .h declares, .c defines; both are needed
-    ${tinyexr_SOURCE_DIR}/deps/miniz/miniz.c
 )
 
 target_include_directories(OptixRaytracer PRIVATE
     ${CMAKE_SOURCE_DIR}/shaders
     ${OptiX_INCLUDE_DIR}
-    # tinyexr header + bundled miniz (needed by Texture.cpp which defines TINYEXR_IMPLEMENTATION)
-    ${tinyexr_SOURCE_DIR}
-    ${tinyexr_SOURCE_DIR}/deps/miniz
 )
 
 target_link_libraries(OptixRaytracer PRIVATE
@@ -36,6 +31,7 @@ target_link_libraries(OptixRaytracer PRIVATE
     imgui
     tinygltf
     nfd
+    OpenEXR::OpenEXR
 )
 
 # Copy PTX shaders next to the executable whenever they are rebuilt.

@@ -75,6 +75,12 @@ public:
     // Returns false and writes outError on failure.
     bool loadEXR(const std::string& path, std::string& outError);
 
+    // Load a Radiance HDR (.hdr) image into pixels (format = RGBA32F, host-side only).
+    // Uses stb_image (stbi_loadf) — decodes RGBE encoding to linear float.
+    // Does NOT upload to GPU — call uploadToGpu() + buildCdf() afterwards.
+    // Returns false and writes outError on failure.
+    bool loadHDR(const std::string& path, std::string& outError);
+
     // Load a common LDR image (PNG, JPG, BMP, TGA, …) into pixels (format = RGBA8,
     // host-side only).  Does NOT upload to GPU — call uploadToGpu() afterwards.
     // Returns false and writes outError on failure.
