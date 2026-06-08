@@ -1,7 +1,7 @@
 #ifndef OPTIX_RAYTRACER_HDRI_BROWSER_H
 #define OPTIX_RAYTRACER_HDRI_BROWSER_H
 
-#include "VulkanContext.h"
+#include "vulkan_context.h"
 
 #include <atomic>
 #include <condition_variable>

@@ -7,12 +7,12 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
-#include "Accel.h"
-#include "HdriBrowser.h"
-#include "LaunchParams.h"
-#include "Scene.h"
-#include "Texture.h"
-#include "VulkanContext.h"
+#include "accel.h"
+#include "hdri_browser.h"
+#include "launch_params.h"
+#include "scene.h"
+#include "texture.h"
+#include "vulkan_context.h"
 
 #include <imgui.h>       // must precede ImGuizmo.h — it relies on ImGui types
 #include <ImGuizmo.h>

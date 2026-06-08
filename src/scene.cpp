@@ -1,5 +1,5 @@
-#include "Scene.h"
-#include "Matrix4x4.h"
+#include "scene.h"
+#include "matrix4x4.h"
 
 #include <stdexcept>
 #include <utility>

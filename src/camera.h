@@ -1,7 +1,7 @@
 #ifndef OPTIX_RAYTRACER_CAMERA_H
 #define OPTIX_RAYTRACER_CAMERA_H
 
-#include "Matrix4x4.h"
+#include "matrix4x4.h"
 #include <cmath>
 #include <string>
 

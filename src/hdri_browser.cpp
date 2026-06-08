@@ -4,8 +4,8 @@
 // drains the ready queue in uploadPending() (before beginFrame) and does the
 // Vulkan upload there.  draw() is a pure ImGui call with no GPU work.
 
-#include "HdriBrowser.h"
-#include "Texture.h"
+#include "hdri_browser.h"
+#include "texture.h"
 
 #include <imgui.h>
 #include <nfd.h>

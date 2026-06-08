@@ -15,7 +15,7 @@
 #include <ImfArray.h>
 #include <ImfIO.h>
 
-#include "Texture.h"
+#include "texture.h"
 
 #include <cmath>     // sinf, fmaxf
 #include <cstdint>   // uint64_t

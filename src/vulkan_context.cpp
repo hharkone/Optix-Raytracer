@@ -1,7 +1,7 @@
 // VulkanContext.cpp — Vulkan device, swapchain, render loop, and display image.
 // Extracted from Application.cpp so that Application focuses on OptiX/CUDA/UI logic.
 
-#include "VulkanContext.h"
+#include "vulkan_context.h"
 
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>

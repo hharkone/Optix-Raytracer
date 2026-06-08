@@ -6,8 +6,8 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <tiny_gltf.h>
 
-#include "SceneLoader.h"
-#include "Node3D.h"
+#include "scene_loader.h"
+#include "node_3d.h"
 
 #include <filesystem>
 #include <cmath>

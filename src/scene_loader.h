@@ -1,7 +1,7 @@
 #ifndef OPTIX_RAYTRACER_SCENE_LOADER_H
 #define OPTIX_RAYTRACER_SCENE_LOADER_H
 
-#include "Scene.h"
+#include "scene.h"
 
 #include <string>
 

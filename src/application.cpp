@@ -3,7 +3,7 @@
 // IMPORTANT: optix_function_table_definition.h must appear in exactly ONE
 // translation unit. This file is that unit — do not include it elsewhere.
 
-#include "Application.h"
+#include "application.h"
 
 #include <optix_function_table_definition.h>
 
@@ -12,7 +12,7 @@
 #include <imgui_impl_vulkan.h>
 
 #include <nfd.h>
-#include "SceneLoader.h"
+#include "scene_loader.h"
 
 #include <algorithm>
 #include <cmath>
@@ -64,7 +64,7 @@ Application::Application(int width, int height, const std::string& title,
     m_ptxDir = ptxDir;
     {
         std::error_code ec;
-        m_ptxWriteTime = std::filesystem::last_write_time(std::filesystem::path(ptxDir) / "devicePrograms.ptx", ec);
+        m_ptxWriteTime = std::filesystem::last_write_time(std::filesystem::path(ptxDir) / "device_programs.ptx", ec);
     }
 
     m_scene = std::make_unique<Scene>();
@@ -308,7 +308,7 @@ void Application::buildPipeline(const std::string& ptxDir)
 {
     // Load PTX source from the directory next to the executable
     const std::string ptxPath =
-        (std::filesystem::path(ptxDir) / "devicePrograms.ptx").string();
+        (std::filesystem::path(ptxDir) / "device_programs.ptx").string();
 
     std::ifstream ptxFile(ptxPath, std::ios::binary | std::ios::ate);
     if (!ptxFile)
@@ -458,7 +458,7 @@ void Application::reloadPipeline()
 
 void Application::checkShaderHotReload()
 {
-    const auto ptxPath = std::filesystem::path(m_ptxDir) / "devicePrograms.ptx";
+    const auto ptxPath = std::filesystem::path(m_ptxDir) / "device_programs.ptx";
 
     std::error_code ec;
     const auto newWriteTime = std::filesystem::last_write_time(ptxPath, ec);

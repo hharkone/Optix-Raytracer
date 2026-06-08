@@ -1,5 +1,5 @@
-// LaunchParams.h — shared between host (C++) and device (CUDA) code.
-// Included by both Application.cpp and devicePrograms.cu.
+// launch_params.h — shared between host (C++) and device (CUDA) code.
+// Included by both application.cpp and device_programs.cu.
 // Must use only types valid in both C++17 and CUDA device code:
 // no STL, no windows.h, no host-only headers.
 #ifndef OPTIX_RAYTRACER_LAUNCH_PARAMS_H
@@ -8,7 +8,7 @@
 #include <stdint.h>        // uint32_t and friends (safe in both host and device code)
 #include <optix.h>         // OptixTraversableHandle
 #include <cuda_runtime.h>  // uchar4, uint2
-#include "SceneData.h"     // MaterialData
+#include "scene_data.h"     // MaterialData
 
 struct LaunchParams
 {

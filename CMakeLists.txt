@@ -118,7 +118,7 @@ endif()
 target_sources(imgui PRIVATE ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp)
 target_include_directories(imgui PUBLIC ${imguizmo_SOURCE_DIR}/src)
 
-# tinygltf v2.8.21 — glTF 2.0 loader (header-only; implementation defined in SceneLoader.cpp)
+# tinygltf v2.8.21 — glTF 2.0 loader (header-only; implementation defined in scene_loader.cpp)
 FetchContent_Declare(tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
     GIT_TAG        v2.8.21

@@ -1,12 +1,12 @@
 #ifndef OPTIX_RAYTRACER_SCENE_H
 #define OPTIX_RAYTRACER_SCENE_H
 
-#include "Accel.h"
-#include "Camera.h"
-#include "Mesh.h"
-#include "Node3D.h"
-#include "Texture.h"
-#include "SceneData.h"  // MaterialData — shared with device code; on include path via CMake
+#include "accel.h"
+#include "camera.h"
+#include "mesh.h"
+#include "node_3d.h"
+#include "texture.h"
+#include "scene_data.h"  // MaterialData — shared with device code; on include path via CMake
 
 #include <memory>
 #include <vector>

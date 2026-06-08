@@ -1,4 +1,4 @@
-﻿// devicePrograms.cu — OptiX Monte Carlo path tracer.
+﻿// device_programs.cu — OptiX Monte Carlo path tracer.
 //
 // Architecture:
 //   • The raygen shader drives the entire bounce loop iteratively via a for-loop.
@@ -12,8 +12,8 @@
 
 #include <optix.h>
 #include "device_math.h"   // float3 operators (+, -, *, /, unary -)
-#include "LaunchParams.h"
-#include "SceneData.h"
+#include "launch_params.h"
+#include "scene_data.h"
 
 extern "C" { __constant__ LaunchParams optixLaunchParams; }
 

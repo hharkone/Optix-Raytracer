@@ -4,10 +4,10 @@
 // BLASes with world-space transforms derived from the scene node hierarchy. The compacted BLAS output buffers and TLAS
 // output buffer are kept alive in MeshBuffers / m_tlasOutputBuffer so OptiX
 // can continue to traverse them during rendering.
-#include "Accel.h"
-#include "Matrix4x4.h"
-#include "Node3D.h"
-#include "Scene.h"
+#include "accel.h"
+#include "matrix4x4.h"
+#include "node_3d.h"
+#include "scene.h"
 
 #include <cstring>
 #include <functional>
