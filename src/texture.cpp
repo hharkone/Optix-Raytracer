@@ -99,6 +99,22 @@ private:
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Replace every non-finite (NaN / inf) channel value in an RGBA32F pixel buffer
+// with 0.  Called once after loading so all downstream consumers — thumbnail
+// generation, CDF building, CUDA texture upload — see clean data automatically.
+static void sanitizeHdrPixels(std::vector<uint8_t>& pixels)
+{
+    float* p           = reinterpret_cast<float*>(pixels.data());
+    const size_t count = pixels.size() / sizeof(float);
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (!std::isfinite(p[i]))
+        {
+            p[i] = 0.0f;
+        }
+    }
+}
+
 #define CUDA_CHECK_TEXTURE(call)                                                 \
     do {                                                                         \
         cudaError_t rc = (call);                                                 \
@@ -245,6 +261,7 @@ bool Texture::loadEXR(const std::string& path, std::string& outError)
         format = PixelFormat::RGBA32F;
         width  = w;
         height = h;
+        sanitizeHdrPixels(pixels);
         return true;
     }
     catch (const std::exception& e)
@@ -290,6 +307,7 @@ bool Texture::loadHDR(const std::string& path, std::string& outError)
     format = PixelFormat::RGBA32F;
     width  = w;
     height = h;
+    sanitizeHdrPixels(pixels);
     return true;
 }
 
