@@ -56,7 +56,6 @@ private:
 
     // HDRI browser panel — async thumbnail grid for quick environment switching
     HdriBrowser m_hdriBrowser;
-    bool        m_showHdriBrowser = false;
 
     void initWindow(const std::string& title);
     void initImGui();

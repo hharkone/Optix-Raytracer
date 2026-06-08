@@ -1427,11 +1427,6 @@ bool Application::tick()
         }
     }
 
-    ImGui::SameLine();
-    if (ImGui::Button("HDRI Browser..."))
-    {
-        m_showHdriBrowser = true;
-    }
     if (m_envMap.gpuTex != 0)
     {
         ImGui::SameLine();
@@ -1980,11 +1975,10 @@ bool Application::tick()
 
     ImGui::End();
 
-    // ── HDRI Browser window ───────────────────────────────────────────────────
-    if (m_showHdriBrowser)
+    // ── HDRI Browser window (always visible, no close button) ────────────────
     {
         std::string selected;
-        if (m_hdriBrowser.draw(&m_showHdriBrowser, selected) && !selected.empty())
+        if (m_hdriBrowser.draw(nullptr, selected) && !selected.empty())
         {
             loadEnvMap(selected);
             m_hdriBrowser.setActivePath(selected);
