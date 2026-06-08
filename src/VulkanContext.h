@@ -8,6 +8,19 @@
 #include <cstdint>
 #include <vector>
 
+// RAII handle for a GPU texture registered with the ImGui Vulkan backend.
+// Created by VulkanContext::createImGuiTexture(); destroyed by destroyImGuiTexture().
+struct ImGuiTexture
+{
+    VkImage         image   = VK_NULL_HANDLE;
+    VkDeviceMemory  memory  = VK_NULL_HANDLE;
+    VkImageView     view    = VK_NULL_HANDLE;
+    VkSampler       sampler = VK_NULL_HANDLE;
+    VkDescriptorSet descSet = VK_NULL_HANDLE;
+
+    bool valid() const { return descSet != VK_NULL_HANDLE; }
+};
+
 // Returned by beginFrame() and consumed by endFrameAndPresent().
 struct VulkanFrameContext
 {
@@ -61,6 +74,16 @@ public:
     // Handles VK_SUBOPTIMAL and VK_ERROR_OUT_OF_DATE automatically.
     void endFrameAndPresent(VulkanFrameContext& frame, int windowW, int windowH);
 
+    // ── Generic ImGui textures (thumbnails, previews, …) ─────────────────────
+    // Upload an RGBA8 image as an ImGui-registered sampled texture.
+    // Uses a synchronous one-shot command submit — call outside an active frame
+    // (i.e. before beginFrame() or after endFrameAndPresent()).
+    ImGuiTexture createImGuiTexture(int w, int h, const uint8_t* rgba8);
+
+    // Free all Vulkan resources owned by tex and un-register it from ImGui.
+    // Safe to call on a default-constructed (invalid) texture; zeroes tex on return.
+    void destroyImGuiTexture(ImGuiTexture& tex);
+
     // ── Utilities ─────────────────────────────────────────────────────────────
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags props) const;
 
@@ -79,6 +102,10 @@ public:
     bool             hasDisplayImage()   const { return m_displayImage != VK_NULL_HANDLE; }
 
 private:
+    // ── One-shot command buffer helpers ───────────────────────────────────────
+    VkCommandBuffer beginOneShot();
+    void            endOneShot(VkCommandBuffer cmd);
+
     GLFWwindow*              m_window         = nullptr;  // stored for resize-on-error
 
     // ── Core ──────────────────────────────────────────────────────────────────

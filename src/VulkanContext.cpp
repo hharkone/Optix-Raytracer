@@ -7,6 +7,7 @@
 #include <imgui_impl_vulkan.h>
 
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -762,6 +763,167 @@ void VulkanContext::endFrameAndPresent(VulkanFrameContext& frame, int /*windowW*
         glfwGetFramebufferSize(m_window, &fw, &fh);
         recreateSwapchain(fw, fh);
     }
+}
+
+// ─── One-shot command buffer helpers ─────────────────────────────────────────
+
+VkCommandBuffer VulkanContext::beginOneShot()
+{
+    VkCommandBufferAllocateInfo allocCI = {};
+    allocCI.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocCI.commandPool        = m_cmdPool;
+    allocCI.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocCI.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(m_device, &allocCI, &cmd);
+
+    VkCommandBufferBeginInfo beginCI = {};
+    beginCI.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginCI.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginCI);
+    return cmd;
+}
+
+void VulkanContext::endOneShot(VkCommandBuffer cmd)
+{
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo si       = {};
+    si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers    = &cmd;
+    vkQueueSubmit(m_queue, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_queue);
+    vkFreeCommandBuffers(m_device, m_cmdPool, 1, &cmd);
+}
+
+// ─── Generic ImGui textures ───────────────────────────────────────────────────
+
+ImGuiTexture VulkanContext::createImGuiTexture(int w, int h, const uint8_t* rgba8)
+{
+    ImGuiTexture tex;
+    const size_t pixelBytes = static_cast<size_t>(w) * h * 4u;
+
+    // ── Device-local image ────────────────────────────────────────────────────
+    VkImageCreateInfo imgCI = {};
+    imgCI.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgCI.imageType     = VK_IMAGE_TYPE_2D;
+    imgCI.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    imgCI.extent        = { static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1 };
+    imgCI.mipLevels     = 1;
+    imgCI.arrayLayers   = 1;
+    imgCI.samples       = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    vkCreateImage(m_device, &imgCI, nullptr, &tex.image);
+
+    VkMemoryRequirements imgReqs = {};
+    vkGetImageMemoryRequirements(m_device, tex.image, &imgReqs);
+    VkMemoryAllocateInfo imgAlloc = {};
+    imgAlloc.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    imgAlloc.allocationSize  = imgReqs.size;
+    imgAlloc.memoryTypeIndex = findMemoryType(imgReqs.memoryTypeBits,
+                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkAllocateMemory(m_device, &imgAlloc, nullptr, &tex.memory);
+    vkBindImageMemory(m_device, tex.image, tex.memory, 0);
+
+    // ── Staging buffer (host-visible, temporary) ──────────────────────────────
+    VkBuffer       staging    = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+
+    VkBufferCreateInfo bufCI = {};
+    bufCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufCI.size  = pixelBytes;
+    bufCI.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    vkCreateBuffer(m_device, &bufCI, nullptr, &staging);
+
+    VkMemoryRequirements bufReqs = {};
+    vkGetBufferMemoryRequirements(m_device, staging, &bufReqs);
+    VkMemoryAllocateInfo bufAlloc = {};
+    bufAlloc.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    bufAlloc.allocationSize  = bufReqs.size;
+    bufAlloc.memoryTypeIndex = findMemoryType(bufReqs.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkAllocateMemory(m_device, &bufAlloc, nullptr, &stagingMem);
+    vkBindBufferMemory(m_device, staging, stagingMem, 0);
+
+    void* mapped = nullptr;
+    vkMapMemory(m_device, stagingMem, 0, pixelBytes, 0, &mapped);
+    std::memcpy(mapped, rgba8, pixelBytes);
+    vkUnmapMemory(m_device, stagingMem);
+
+    // ── One-shot: UNDEFINED → TRANSFER_DST, copy, TRANSFER_DST → SHADER_READ ─
+    VkCommandBuffer cmd = beginOneShot();
+
+    VkImageMemoryBarrier toXfer    = {};
+    toXfer.sType                   = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toXfer.oldLayout               = VK_IMAGE_LAYOUT_UNDEFINED;
+    toXfer.newLayout               = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toXfer.srcQueueFamilyIndex     = VK_QUEUE_FAMILY_IGNORED;
+    toXfer.dstQueueFamilyIndex     = VK_QUEUE_FAMILY_IGNORED;
+    toXfer.image                   = tex.image;
+    toXfer.subresourceRange        = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    toXfer.srcAccessMask           = 0;
+    toXfer.dstAccessMask           = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toXfer);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource  = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.imageExtent       = { static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1 };
+    vkCmdCopyBufferToImage(cmd, staging, tex.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier toShader = toXfer;
+    toShader.oldLayout            = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toShader.newLayout            = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toShader.srcAccessMask        = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toShader.dstAccessMask        = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toShader);
+
+    endOneShot(cmd);  // submit + vkQueueWaitIdle + free
+
+    // Free staging resources now that the GPU copy is complete.
+    vkDestroyBuffer(m_device, staging,    nullptr);
+    vkFreeMemory(m_device,    stagingMem, nullptr);
+
+    // ── Image view ────────────────────────────────────────────────────────────
+    VkImageViewCreateInfo viewCI = {};
+    viewCI.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewCI.image            = tex.image;
+    viewCI.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    viewCI.format           = VK_FORMAT_R8G8B8A8_UNORM;
+    viewCI.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCreateImageView(m_device, &viewCI, nullptr, &tex.view);
+
+    // ── Sampler (bilinear, clamp — thumbnails benefit from linear filtering) ──
+    VkSamplerCreateInfo samplerCI = {};
+    samplerCI.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerCI.magFilter    = VK_FILTER_LINEAR;
+    samplerCI.minFilter    = VK_FILTER_LINEAR;
+    samplerCI.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerCI.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerCI.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    vkCreateSampler(m_device, &samplerCI, nullptr, &tex.sampler);
+
+    // ── Register with ImGui ───────────────────────────────────────────────────
+    tex.descSet = ImGui_ImplVulkan_AddTexture(tex.sampler, tex.view,
+                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    return tex;
+}
+
+void VulkanContext::destroyImGuiTexture(ImGuiTexture& tex)
+{
+    if (m_device == VK_NULL_HANDLE) { return; }
+    if (tex.descSet != VK_NULL_HANDLE) { ImGui_ImplVulkan_RemoveTexture(tex.descSet); tex.descSet = VK_NULL_HANDLE; }
+    if (tex.sampler != VK_NULL_HANDLE) { vkDestroySampler(m_device,   tex.sampler, nullptr); tex.sampler = VK_NULL_HANDLE; }
+    if (tex.view    != VK_NULL_HANDLE) { vkDestroyImageView(m_device, tex.view,    nullptr); tex.view    = VK_NULL_HANDLE; }
+    if (tex.image   != VK_NULL_HANDLE) { vkDestroyImage(m_device,     tex.image,   nullptr); tex.image   = VK_NULL_HANDLE; }
+    if (tex.memory  != VK_NULL_HANDLE) { vkFreeMemory(m_device,       tex.memory,  nullptr); tex.memory  = VK_NULL_HANDLE; }
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

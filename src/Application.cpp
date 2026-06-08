@@ -154,7 +154,8 @@ Application::~Application()
     // destroyDisplayImage() calls ImGui_ImplVulkan_RemoveTexture(), so it must
     // run while the ImGui Vulkan backend is still alive (before Shutdown).
     m_vkCtx.waitIdle();
-    m_vkCtx.destroyDisplayImage();  // unregisters display texture from ImGui
+    m_hdriBrowser.shutdown(m_vkCtx);  // destroyImGuiTexture before ImGui_ImplVulkan_Shutdown
+    m_vkCtx.destroyDisplayImage();    // unregisters display texture from ImGui
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -1419,9 +1420,17 @@ bool Application::tick()
         nfdfilteritem_t filters[] = { { "HDR Image", "exr,hdr" } };
         if (NFD_OpenDialogU8(&outPath, filters, 1, nullptr) == NFD_OKAY)
         {
-            loadEnvMap(reinterpret_cast<const char*>(outPath));
+            const std::string p = reinterpret_cast<const char*>(outPath);
+            loadEnvMap(p);
+            m_hdriBrowser.setActivePath(p);
             NFD_FreePathU8(outPath);
         }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("HDRI Browser..."))
+    {
+        m_showHdriBrowser = true;
     }
     if (m_envMap.gpuTex != 0)
     {
@@ -1971,7 +1980,23 @@ bool Application::tick()
 
     ImGui::End();
 
+    // ── HDRI Browser window ───────────────────────────────────────────────────
+    if (m_showHdriBrowser)
+    {
+        std::string selected;
+        if (m_hdriBrowser.draw(&m_showHdriBrowser, selected) && !selected.empty())
+        {
+            loadEnvMap(selected);
+            m_hdriBrowser.setActivePath(selected);
+        }
+    }
+
     ImGui::Render();
+
+    // Upload any newly-ready thumbnails to the GPU.  Must happen after
+    // ImGui::Render() (so ImGui won't reference new textures this frame) and
+    // before beginFrame() (so no frame is in-flight during vkQueueWaitIdle).
+    m_hdriBrowser.uploadPending(m_vkCtx);
 
     // ── Vulkan present ─────────────────────────────────────────────────────────
 
