@@ -99,19 +99,29 @@ private:
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Replace every non-finite (NaN / inf) channel value in an RGBA32F pixel buffer
-// with 0.  Called once after loading so all downstream consumers — thumbnail
-// generation, CDF building, CUDA texture upload — see clean data automatically.
+// Sanitise every channel in an RGBA32F pixel buffer so all values are finite.
+// Called once after loading; all downstream consumers (thumbnail generation,
+// CDF building, CUDA texture upload) then see clean data automatically.
+//
+// EXR stores radiance in 16-bit half floats; values that exceed the maximum
+// representable half (65504) are written as +inf.  Setting those to 0 makes
+// bright areas (e.g. the sun) render black, so we clamp to 65504 instead —
+// the value is still very bright and physically meaningful.
+// NaN values have no sensible interpretation and are zeroed out.
 static void sanitizeHdrPixels(std::vector<uint8_t>& pixels)
 {
+    static constexpr float kMaxHalf = 65504.0f;  // largest finite half-float
+
     float* p           = reinterpret_cast<float*>(pixels.data());
     const size_t count = pixels.size() / sizeof(float);
     for (size_t i = 0; i < count; ++i)
     {
-        if (!std::isfinite(p[i]))
-        {
+        if (std::isnan(p[i]))
+            p[i] = 0.0f;          // truly invalid — no meaningful value
+        else if (p[i] > kMaxHalf) // +inf or any overflow beyond EXR's ceiling
+            p[i] = kMaxHalf;
+        else if (p[i] < 0.0f)    // negative radiance is non-physical
             p[i] = 0.0f;
-        }
     }
 }
 
