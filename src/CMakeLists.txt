@@ -1,23 +1,23 @@
 add_executable(OptixRaytracer
     main.cpp
-    Application.h
-    Application.cpp
-    Accel.h
-    Accel.cpp
-    HdriBrowser.h
-    HdriBrowser.cpp
-    VulkanContext.h
-    VulkanContext.cpp
-    Camera.h
-    Matrix4x4.h
-    Node3D.h
-    Scene.h
-    Scene.cpp
-    Mesh.h
-    Texture.h
-    Texture.cpp
-    SceneLoader.h
-    SceneLoader.cpp
+    application.h
+    application.cpp
+    accel.h
+    accel.cpp
+    hdri_browser.h
+    hdri_browser.cpp
+    vulkan_context.h
+    vulkan_context.cpp
+    camera.h
+    matrix4x4.h
+    node_3d.h
+    scene.h
+    scene.cpp
+    mesh.h
+    texture.h
+    texture.cpp
+    scene_loader.h
+    scene_loader.cpp
 )
 
 target_include_directories(OptixRaytracer PRIVATE
@@ -84,5 +84,5 @@ target_link_options(OptixRaytracer PRIVATE
 target_compile_definitions(OptixRaytracer PRIVATE NOMINMAX)
 
 # Visual Studio source groups for cleaner Solution Explorer layout
-source_group("Source Files" FILES main.cpp Application.cpp HdriBrowser.cpp VulkanContext.cpp Accel.cpp Scene.cpp SceneLoader.cpp Texture.cpp)
-source_group("Header Files" FILES Application.h HdriBrowser.h VulkanContext.h Accel.h Camera.h Matrix4x4.h Node3D.h Scene.h SceneLoader.h Mesh.h Texture.h)
+source_group("Source Files" FILES main.cpp application.cpp hdri_browser.cpp vulkan_context.cpp accel.cpp scene.cpp scene_loader.cpp texture.cpp)
+source_group("Header Files" FILES application.h hdri_browser.h vulkan_context.h accel.h camera.h matrix4x4.h node_3d.h scene.h scene_loader.h mesh.h texture.h)
