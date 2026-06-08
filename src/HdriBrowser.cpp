@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -74,10 +75,13 @@ void HdriBrowser::workerLoop()
         }
 
         // Load the full image on this worker thread.
+        // item.path is UTF-8; use u8path() so the dot-search in extension()
+        // isn't confused by non-ASCII bytes on Windows.
         Texture tex;
         std::string err;
-        const std::string ext = std::filesystem::path(item.path).extension().string();
-        const bool isHdr = (ext == ".hdr" || ext == ".HDR");
+        std::string ext = std::filesystem::u8path(item.path).extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const bool isHdr = (ext == ".hdr");
         const bool ok    = isHdr ? tex.loadHDR(item.path, err)
                                  : tex.loadEXR(item.path, err);
 
@@ -193,28 +197,49 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
     clearEntries(vkCtx);
     m_folder = folderPath;
 
-    std::error_code ec;
-    for (const auto& dirEntry :
-         std::filesystem::directory_iterator(folderPath, ec))
+    // Interpret folderPath as UTF-8 (NFD always returns UTF-8 on all platforms).
+    // On Windows, std::filesystem::path(std::string) uses the ANSI code page, so
+    // non-ASCII folder names would produce a broken path.  u8path() decodes the
+    // bytes as UTF-8 and stores them as UTF-16 internally.
+    const std::filesystem::path fPath = std::filesystem::u8path(folderPath);
+
+    try
     {
-        if (!dirEntry.is_regular_file(ec)) continue;
-        const auto ext = dirEntry.path().extension().string();
-        const bool isExr = (ext == ".exr" || ext == ".EXR");
-        const bool isHdr = (ext == ".hdr" || ext == ".HDR");
-        if (!isExr && !isHdr) continue;
-
-        const int idx = static_cast<int>(m_entries.size());
-        ThumbEntry te;
-        te.path  = dirEntry.path().string();
-        te.name  = dirEntry.path().filename().string();
-        te.state = ThumbState::Loading;
-        m_entries.push_back(std::move(te));
-
+        for (const auto& dirEntry : std::filesystem::directory_iterator(fPath))
         {
-            std::lock_guard<std::mutex> lock(m_workMutex);
-            m_workQueue.push({ idx, m_entries.back().path });
+            // Use the no-ec overload so it reads from the cached directory-entry
+            // status (fast, no extra syscall).  The ec overload on MSVC writes back
+            // to the error_code after each call; if the same ec was passed to the
+            // iterator constructor, a non-zero write here stops iteration early.
+            if (!dirEntry.is_regular_file()) continue;
+
+            // Case-insensitive extension check — tolower handles .EXR / .Exr / etc.
+            std::string ext = dirEntry.path().extension().string();
+            for (char& c : ext)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext != ".exr" && ext != ".hdr") continue;
+
+            const int idx = static_cast<int>(m_entries.size());
+            ThumbEntry te;
+            // u8string() gives UTF-8 on every platform.  On Windows, .string()
+            // would use the ANSI code page and corrupt paths containing ä/ö/å etc.
+            te.path  = dirEntry.path().u8string();
+            te.name  = dirEntry.path().filename().u8string();
+            te.state = ThumbState::Loading;
+            m_entries.push_back(std::move(te));
+
+            {
+                std::lock_guard<std::mutex> lock(m_workMutex);
+                m_workQueue.push({ idx, m_entries.back().path });
+            }
         }
     }
+    catch (const std::exception& /*e*/)
+    {
+        // Directory not accessible — m_entries stays empty and the UI will show
+        // "No .exr or .hdr files found in this folder."
+    }
+
     m_workCv.notify_all();
 }
 

@@ -13,14 +13,83 @@
 
 #include <ImfRgbaFile.h>
 #include <ImfArray.h>
+#include <ImfIO.h>
 
 #include "Texture.h"
 
 #include <cmath>     // sinf, fmaxf
+#include <cstdint>   // uint64_t
 #include <cstring>   // std::memcpy
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// ─── Windows: UTF-8 file-open helpers ────────────────────────────────────────
+//
+// stbi_loadf() and Imf::RgbaInputFile(const char*) both call fopen() under the
+// hood, which on MSVC uses the ANSI code page.  Paths that arrive as UTF-8
+// (from NFD or std::filesystem::u8string()) are therefore misread when they
+// contain characters outside that code page — Scandinavian ä/ö/å, etc.
+//
+// Fixes:
+//  - loadHDR  → open with _wfopen, then hand the FILE* to stbi_loadf_from_file
+//  - loadEXR  → use a custom Imf::IStream (WideFileStream) backed by _wfopen
+#ifdef _WIN32
+#   ifndef WIN32_LEAN_AND_MEAN
+#       define WIN32_LEAN_AND_MEAN
+#   endif
+#   include <windows.h>
+
+static std::wstring utf8ToWide(const std::string& utf8)
+{
+    if (utf8.empty()) return {};
+    const int n = MultiByteToWideChar(
+        CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
+    std::wstring wide(n, L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), wide.data(), n);
+    return wide;
+}
+
+// Thin Imf::IStream wrapper around a _wfopen handle.
+// Enables OpenEXR to open files whose paths contain non-ANSI characters.
+class WideFileStream final : public Imf::IStream
+{
+public:
+    explicit WideFileStream(const std::string& utf8Path)
+        : Imf::IStream(utf8Path.c_str())
+        , m_file(_wfopen(utf8ToWide(utf8Path).c_str(), L"rb"))
+    {
+        if (!m_file)
+            throw std::runtime_error("Cannot open file: " + utf8Path);
+    }
+    ~WideFileStream() override { if (m_file) fclose(m_file); }
+
+    // Returns true while the stream is not at EOF, false on the last chunk.
+    // Throws on a short read (genuine error or unexpected EOF mid-stream).
+    bool read(char c[], int n) override
+    {
+        if (fread(c, 1, static_cast<size_t>(n), m_file) < static_cast<size_t>(n))
+        {
+            if (feof(m_file)) throw std::runtime_error("Unexpected end of file");
+            throw std::runtime_error("File read error");
+        }
+        return feof(m_file) == 0;
+    }
+    uint64_t tellg() override
+    {
+        return static_cast<uint64_t>(_ftelli64(m_file));
+    }
+    void seekg(uint64_t pos) override
+    {
+        _fseeki64(m_file, static_cast<__int64>(pos), SEEK_SET);
+    }
+    void clear() override { clearerr(m_file); }
+
+private:
+    FILE* m_file;
+};
+#endif // _WIN32
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -135,7 +204,12 @@ bool Texture::loadEXR(const std::string& path, std::string& outError)
 {
     try
     {
+#ifdef _WIN32
+        WideFileStream    stream(path);
+        Imf::RgbaInputFile file(stream);
+#else
         Imf::RgbaInputFile file(path.c_str());
+#endif
         const Imath::Box2i dw = file.dataWindow();
         const int w = dw.max.x - dw.min.x + 1;
         const int h = dw.max.y - dw.min.y + 1;
@@ -181,7 +255,19 @@ bool Texture::loadHDR(const std::string& path, std::string& outError)
     int w = 0, h = 0, channels = 0;
     // stbi_loadf decodes RGBE encoding → linear float; requesting 4 channels
     // always produces RGBA (alpha is filled with 1.0 since .hdr has no alpha).
+    // On Windows use _wfopen so non-ANSI characters in the path work correctly.
+#ifdef _WIN32
+    FILE* f = _wfopen(utf8ToWide(path).c_str(), L"rb");
+    if (!f)
+    {
+        outError = "Cannot open file: " + path;
+        return false;
+    }
+    float* data = stbi_loadf_from_file(f, &w, &h, &channels, 4);
+    fclose(f);
+#else
     float* data = stbi_loadf(path.c_str(), &w, &h, &channels, 4);
+#endif
     if (!data)
     {
         outError = stbi_failure_reason()
