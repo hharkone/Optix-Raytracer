@@ -162,7 +162,10 @@ void HdriBrowser::generateThumbnail(const float* src, int srcW, int srcH,
                     r += p[0]; g += p[1]; b += p[2]; ++n;
                 }
             }
-            if (n > 0) { r /= n; g /= n; b /= n; }
+            if (n > 0)
+            {
+                r /= n; g /= n; b /= n;
+            }
 
             // Per-channel Reinhard with auto-exposure
             r = (r * exposure) / (1.0f + r * exposure);
@@ -297,7 +300,9 @@ void HdriBrowser::uploadPending(VulkanContext& vkCtx)
     for (auto& item : batch)
     {
         if (item.idx < 0 || item.idx >= static_cast<int>(m_entries.size()))
+        {
             continue;
+        }
 
         auto& entry = m_entries[item.idx];
         if (item.errorMsg.empty())
@@ -376,7 +381,10 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
         int nLoading = 0;
         for (const auto& e : m_entries)
         {
-            if (e.state == ThumbState::Loading) ++nLoading;
+            if (e.state == ThumbState::Loading)
+            {
+                ++nLoading;
+            }
         }
         if (nLoading > 0)
         {
@@ -483,7 +491,9 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
             }
 
             if (ImGui::IsItemHovered())
+            {
                 ImGui::SetTooltip("%s", e.name.c_str());
+            }
         }
         else if (e.state == ThumbState::Error)
         {
@@ -491,7 +501,9 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
             ImGui::Button("##err", buttonSz);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
+            {
                 ImGui::SetTooltip("Error: %s\n%s", e.name.c_str(), e.errorMsg.c_str());
+            }
         }
         else
         {
@@ -503,17 +515,23 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
             ImGui::Button("##load", buttonSz);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
+            {
                 ImGui::SetTooltip("Loading: %s", e.name.c_str());
+            }
         }
 
         // ── File name label ───────────────────────────────────────────────────
         // Wrap at the button's outer width (image + 2 × FramePadding).
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + buttonSz.x);
         if (isActive)
+        {
             ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.00f, 1.0f), "%s",
                                e.name.c_str());
+        }
         else
+        {
             ImGui::TextUnformatted(e.name.c_str());
+        }
         ImGui::PopTextWrapPos();
 
         // Zero-size Dummy after the label.  Its purpose is purely to extend
