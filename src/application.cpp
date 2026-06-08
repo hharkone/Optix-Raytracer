@@ -118,7 +118,10 @@ Application::~Application()
         m_materialsBuffer = 0;
     }
 
-    if (m_scene) m_scene->destroyAccel();  // free AS GPU memory before destroying OptiX context
+    if (m_scene)
+    {
+        m_scene->destroyAccel();  // free AS GPU memory before destroying OptiX context
+    }
 
     // ── Denoiser resources ────────────────────────────────────────────────────
     if (m_denoiser)
@@ -187,7 +190,9 @@ void Application::initWindow(const std::string& title)
     // On other platforms (Win32, macOS, X11) TRUE is correct: the swapchain should match
     // the monitor's physical resolution, so we only disable it on Wayland.
     if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
+    {
         glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, GLFW_FALSE);
+    }
 
     m_window = glfwCreateWindow(m_width, m_height, title.c_str(), nullptr, nullptr);
     if (!m_window)
@@ -1286,9 +1291,18 @@ bool Application::tick()
         // 1 = Scale  |  2 = Rotate  |  3 = Translate
         if (!ImGui::GetIO().WantTextInput)
         {
-            if (ImGui::IsKeyPressed(ImGuiKey_1)) m_gizmoOp = ImGuizmo::SCALE;
-            if (ImGui::IsKeyPressed(ImGuiKey_2)) m_gizmoOp = ImGuizmo::ROTATE;
-            if (ImGui::IsKeyPressed(ImGuiKey_3)) m_gizmoOp = ImGuizmo::TRANSLATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_1))
+            {
+                m_gizmoOp = ImGuizmo::SCALE;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_2))
+            {
+                m_gizmoOp = ImGuizmo::ROTATE;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_3))
+            {
+                m_gizmoOp = ImGuizmo::TRANSLATE;
+            }
         }
 
         if (m_selectedNodeIdx >= 0

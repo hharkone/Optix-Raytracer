@@ -47,12 +47,18 @@ void HdriBrowser::stopWorkers()
     {
         std::lock_guard<std::mutex> lock(m_workMutex);
         m_stopWorkers = true;
-        while (!m_workQueue.empty()) m_workQueue.pop();  // discard pending
+        while (!m_workQueue.empty())
+        {
+            m_workQueue.pop();  // discard pending
+        }
     }
     m_workCv.notify_all();
     for (auto& t : m_workers)
     {
-        if (t.joinable()) t.join();
+        if (t.joinable())
+        {
+            t.join();
+        }
     }
     m_workers.clear();
     m_stopWorkers = false;
@@ -69,7 +75,10 @@ void HdriBrowser::workerLoop()
             {
                 return m_stopWorkers || !m_workQueue.empty();
             });
-            if (m_stopWorkers && m_workQueue.empty()) return;
+            if (m_stopWorkers && m_workQueue.empty())
+            {
+                return;
+            }
             item = std::move(m_workQueue.front());
             m_workQueue.pop();
         }
@@ -80,7 +89,10 @@ void HdriBrowser::workerLoop()
         Texture tex;
         std::string err;
         std::string ext = std::filesystem::u8path(item.path).extension().string();
-        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (char& c : ext)
+        {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
         const bool isHdr = (ext == ".hdr");
         const bool ok    = isHdr ? tex.loadHDR(item.path, err)
                                  : tex.loadEXR(item.path, err);
@@ -180,7 +192,10 @@ void HdriBrowser::clearEntries(VulkanContext& vkCtx)
     // Drain the ready queue before touching entries
     {
         std::lock_guard<std::mutex> lock(m_readyMutex);
-        while (!m_readyQueue.empty()) m_readyQueue.pop();
+        while (!m_readyQueue.empty())
+        {
+            m_readyQueue.pop();
+        }
     }
 
     for (auto& e : m_entries)
@@ -215,13 +230,21 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
             // status (fast, no extra syscall).  The ec overload on MSVC writes back
             // to the error_code after each call; if the same ec was passed to the
             // iterator constructor, a non-zero write here stops iteration early.
-            if (!dirEntry.is_regular_file()) continue;
+            if (!dirEntry.is_regular_file())
+            {
+                continue;
+            }
 
             // Case-insensitive extension check — tolower handles .EXR / .Exr / etc.
             std::string ext = dirEntry.path().extension().string();
             for (char& c : ext)
+            {
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (ext != ".exr" && ext != ".hdr") continue;
+            }
+            if (ext != ".exr" && ext != ".hdr")
+            {
+                continue;
+            }
 
             const int idx = static_cast<int>(m_entries.size());
             ThumbEntry te;
@@ -299,7 +322,10 @@ void HdriBrowser::shutdown(VulkanContext& vkCtx)
 
     {
         std::lock_guard<std::mutex> lock(m_readyMutex);
-        while (!m_readyQueue.empty()) m_readyQueue.pop();
+        while (!m_readyQueue.empty())
+        {
+            m_readyQueue.pop();
+        }
     }
 
     for (auto& e : m_entries)
@@ -421,7 +447,10 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
     {
         auto& e = m_entries[i];
 
-        if (i % cols != 0) ImGui::SameLine(0.0f, padding);
+        if (i % cols != 0)
+        {
+            ImGui::SameLine(0.0f, padding);
+        }
 
         ImGui::PushID(i);
         ImGui::BeginGroup();
@@ -448,7 +477,10 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
                 selected     = true;
             }
 
-            if (isActive) ImGui::PopStyleColor(3);
+            if (isActive)
+            {
+                ImGui::PopStyleColor(3);
+            }
 
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("%s", e.name.c_str());

@@ -33,45 +33,70 @@ inline Matrix4x4 mat4Inverse(const Matrix4x4& in)
 {
     float A[4][4], I[4][4];
     for (int r = 0; r < 4; ++r)
+    {
         for (int c = 0; c < 4; ++c)
         {
             A[r][c] = in.m[r][c];
             I[r][c] = (r == c) ? 1.f : 0.f;
         }
+    }
 
     for (int col = 0; col < 4; ++col)
     {
         int pivot = col;
         for (int row = col + 1; row < 4; ++row)
+        {
             if (fabsf(A[row][col]) > fabsf(A[pivot][col]))
+            {
                 pivot = row;
+            }
+        }
 
         if (pivot != col)
+        {
             for (int k = 0; k < 4; ++k)
             {
                 std::swap(A[col][k], A[pivot][k]);
                 std::swap(I[col][k], I[pivot][k]);
             }
+        }
 
         const float diag = A[col][col];
         if (fabsf(diag) < 1e-8f)
+        {
             return mat4Identity();
+        }
 
         const float inv = 1.f / diag;
-        for (int k = 0; k < 4; ++k) { A[col][k] *= inv; I[col][k] *= inv; }
+        for (int k = 0; k < 4; ++k)
+        {
+            A[col][k] *= inv;
+            I[col][k] *= inv;
+        }
 
         for (int row = 0; row < 4; ++row)
         {
-            if (row == col) continue;
+            if (row == col)
+            {
+                continue;
+            }
             const float f = A[row][col];
-            for (int k = 0; k < 4; ++k) { A[row][k] -= f * A[col][k]; I[row][k] -= f * I[col][k]; }
+            for (int k = 0; k < 4; ++k)
+            {
+                A[row][k] -= f * A[col][k];
+                I[row][k] -= f * I[col][k];
+            }
         }
     }
 
     Matrix4x4 result;
     for (int r = 0; r < 4; ++r)
+    {
         for (int c = 0; c < 4; ++c)
+        {
             result.m[r][c] = I[r][c];
+        }
+    }
     return result;
 }
 

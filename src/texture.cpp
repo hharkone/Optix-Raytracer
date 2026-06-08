@@ -42,7 +42,10 @@
 
 static std::wstring utf8ToWide(const std::string& utf8)
 {
-    if (utf8.empty()) return {};
+    if (utf8.empty())
+    {
+        return {};
+    }
     const int n = MultiByteToWideChar(
         CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
     std::wstring wide(n, L'\0');
@@ -71,7 +74,10 @@ public:
     {
         if (fread(c, 1, static_cast<size_t>(n), m_file) < static_cast<size_t>(n))
         {
-            if (feof(m_file)) throw std::runtime_error("Unexpected end of file");
+            if (feof(m_file))
+            {
+                throw std::runtime_error("Unexpected end of file");
+            }
             throw std::runtime_error("File read error");
         }
         return feof(m_file) == 0;

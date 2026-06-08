@@ -234,7 +234,14 @@ int upperBound(const float* cdf, int n, float u)
     while (lo < hi)
     {
         const int mid = (lo + hi) >> 1;
-        if (cdf[mid] < u) lo = mid + 1; else hi = mid;
+        if (cdf[mid] < u)
+        {
+            lo = mid + 1;
+        }
+        else
+        {
+            hi = mid;
+        }
     }
     return lo;
 }
@@ -279,7 +286,10 @@ float3 sampleEnvMapIS(float r1, float r2, float3& outDir, float& outPdf)
 static __forceinline__ __device__
 float evalEnvMapPdf(float3 dir)
 {
-    if (!optixLaunchParams.envMarginalCdf) return 0.0f;
+    if (!optixLaunchParams.envMarginalCdf)
+    {
+        return 0.0f;
+    }
 
     const int    W           = optixLaunchParams.envCdfW;
     const int    H           = optixLaunchParams.envCdfH;
@@ -498,7 +508,10 @@ extern "C" __global__ void __raygen__renderFrame()
             const float3 Hc       = devNormalize(Tc * Hc_local.x + Bc * Hc_local.y + Nf * Hc_local.z);
             const float3 Lc       = devReflect(rayDir, Hc);
 
-            if (devDot(Lc, Nf) <= 0.0f) break;
+            if (devDot(Lc, Nf) <= 0.0f)
+            {
+                break;
+            }
 
             // cc_F is achromatic (F0 = 0.04 is grey → Schlick stays grey), so
             // cc_F * clearcoat / p_coat = cc_F * clearcoat / (clearcoat * luminance(cc_F)) = 1.
@@ -538,7 +551,10 @@ extern "C" __global__ void __raygen__renderFrame()
                 const float3 H       = devNormalize(T * H_local.x + B * H_local.y + Nf * H_local.z);
                 const float3 L       = devReflect(rayDir, H);
 
-                if (devDot(L, Nf) <= 0.0f) break;
+                if (devDot(L, Nf) <= 0.0f)
+                {
+                    break;
+                }
 
                 const float cosNL = fmaxf(1e-4f, devDot(Nf, L));
                 throughput *= F * (devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec));
@@ -670,7 +686,10 @@ extern "C" __global__ void __raygen__renderFrame()
         if (bounce >= 3)
         {
             const float maxThr = fmaxf(throughput.x, fmaxf(throughput.y, throughput.z));
-            if (rnd(seed) > maxThr) break;
+            if (rnd(seed) > maxThr)
+            {
+                break;
+            }
             throughput *= 1.0f / fmaxf(maxThr, 1e-6f);
         }
     }
