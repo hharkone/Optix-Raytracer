@@ -387,18 +387,35 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
     const int dispW = kDispW[m_thumbSizeIdx];
     const int dispH = kDispH[m_thumbSizeIdx];
 
-    // Compute column count from the available width.
-    const float padding  = 8.0f;
-    const float labelH   = ImGui::GetTextLineHeightWithSpacing();
-    const float cellW    = static_cast<float>(dispW) + padding;
-    const float cellH    = static_cast<float>(dispH) + labelH + padding;
-    const float avail    = ImGui::GetContentRegionAvail().x;
-    const int   cols     = std::max(1, static_cast<int>(avail / cellW));
+    const float padding = 8.0f;
+    const float labelH  = ImGui::GetTextLineHeightWithSpacing();
+
+    // ImageButton adds FramePadding on each side of the image; account for it
+    // so that cellW, cellH, and the label wrap position are all exact.
+    const float fp  = ImGui::GetStyle().FramePadding.x;
+    const float fpy = ImGui::GetStyle().FramePadding.y;
+    const float cellW = static_cast<float>(dispW) + 2.0f * fp  + padding;
+    const float cellH = static_cast<float>(dispH) + 2.0f * fpy + labelH + padding;
 
     ImGui::BeginChild("##thumbgrid", ImVec2(0.0f, 0.0f), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
-    const ImVec2 thumbSz(static_cast<float>(dispW), static_cast<float>(dispH));
+    // Query available width INSIDE the child so the column count accounts
+    // for the child's own scrollbar reservation and inner padding.
+    // Measuring in the parent window (before BeginChild) gives a wider value,
+    // causing the rightmost column to overflow the child's clip rect.
+    const float avail = ImGui::GetContentRegionAvail().x;
+
+    // n items with (n-1) gaps: row = n*cellW - padding ≤ avail → n ≤ (avail+padding)/cellW.
+    const int   cols  = std::max(1, static_cast<int>((avail + padding) / cellW));
+
+    // thumbSz is the *image* size passed to ImageButton; the button's outer size
+    // (and therefore the effective cell width) is thumbSz + 2 × FramePadding.
+    const ImVec2 thumbSz (static_cast<float>(dispW),              static_cast<float>(dispH));
+    // Error / Loading use Button with an explicit outer size that matches the
+    // ImageButton outer size so all three states occupy the same cell width.
+    const ImVec2 buttonSz(static_cast<float>(dispW) + 2.0f * fp,
+                          static_cast<float>(dispH) + 2.0f * fpy);
 
     for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
     {
@@ -439,7 +456,7 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
         else if (e.state == ThumbState::Error)
         {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.40f, 0.10f, 0.10f, 1.0f));
-            ImGui::Button("##err", thumbSz);
+            ImGui::Button("##err", buttonSz);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Error: %s\n%s", e.name.c_str(), e.errorMsg.c_str());
@@ -451,15 +468,15 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
                                            1.0f);
             const float bright = 0.12f + 0.08f * t;
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(bright, bright, bright, 1.0f));
-            ImGui::Button("##load", thumbSz);
+            ImGui::Button("##load", buttonSz);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Loading: %s", e.name.c_str());
         }
 
         // ── File name label ───────────────────────────────────────────────────
-        const float labelWidth = static_cast<float>(dispW);
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + labelWidth);
+        // Wrap at the button's outer width (image + 2 × FramePadding).
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + buttonSz.x);
         if (isActive)
             ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.00f, 1.0f), "%s",
                                e.name.c_str());
@@ -467,13 +484,17 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
             ImGui::TextUnformatted(e.name.c_str());
         ImGui::PopTextWrapPos();
 
+        // Zero-size Dummy after the label.  Its purpose is purely to extend
+        // the group's bounding-box max-y to include the trailing ItemSpacing.y
+        // that follows the label.  Without it, EndGroup's ItemSize reports a
+        // height that is one ItemSpacing.y short, making the row advance by
+        // cellH - ItemSpacing.y instead of cellH.  A Dummy placed *outside*
+        // EndGroup would overwrite CursorPosPrevLine.y and break SameLine's
+        // row-start y for subsequent columns.
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+
         ImGui::EndGroup();
         ImGui::PopID();
-
-        // Keep fixed cell height so the grid rows are aligned.
-        const float groupH = ImGui::GetItemRectSize().y;
-        if (groupH < cellH)
-            ImGui::Dummy(ImVec2(0.0f, cellH - groupH));
     }
 
     ImGui::EndChild();
