@@ -175,6 +175,43 @@ float devSmithG1(float cosTheta, float alpha)
     return 2.0f * cosTheta / (cosTheta + sqrtf(a2 + (1.0f - a2) * c2));
 }
 
+// GGX normal distribution function: D(H) = α² / (π·(cosH²·(α²−1)+1)²)
+static __forceinline__ __device__
+float devGGX_D(float cosH, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float d  = cosH * cosH * (a2 - 1.0f) + 1.0f;
+    return a2 / (3.14159265358979f * d * d);
+}
+
+// PDF of a direction sampled by GGX VNDF:  p(ωo) = G1(cosV,α)·D(H) / (4·cosV)
+static __forceinline__ __device__
+float devGGX_PDF(float cosV, float cosH, float alpha)
+{
+    return devSmithG1(cosV, alpha) * devGGX_D(cosH, alpha)
+           / (4.0f * fmaxf(cosV, 1e-5f));
+}
+
+// Smith height-correlated G2 for arbitrary light + view directions.
+// G2 = 2·cosI·cosO / (cosO·√(α²+(1−α²)·cosI²) + cosI·√(α²+(1−α²)·cosO²))
+static __forceinline__ __device__
+float devGGX_G2(float cosI, float cosO, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float lv = cosO * sqrtf(a2 + (1.0f - a2) * cosI * cosI);
+    const float ll = cosI * sqrtf(a2 + (1.0f - a2) * cosO * cosO);
+    return 2.0f * cosI * cosO / fmaxf(lv + ll, 1e-8f);
+}
+
+// GGX BRDF × cosI without Fresnel, for NEE evaluation.
+// Returns D(H)·G2(cosI,cosO) / (4·cosO).  Caller multiplies by Fresnel(V·H, F0).
+static __forceinline__ __device__
+float devGGX_BRDFCosI(float cosI, float cosO, float cosH, float alpha)
+{
+    return devGGX_D(cosH, alpha) * devGGX_G2(cosI, cosO, alpha)
+           / (4.0f * fmaxf(cosO, 1e-5f));
+}
+
 // Reflect incident direction v around normal n.
 static __forceinline__ __device__
 float3 devReflect(float3 v, float3 n)
@@ -516,11 +553,12 @@ extern "C" __global__ void __raygen__renderFrame()
             // cc_F is achromatic (F0 = 0.04 is grey → Schlick stays grey), so
             // cc_F * clearcoat / p_coat = cc_F * clearcoat / (clearcoat * luminance(cc_F)) = 1.
             // The probability selection already carries the energy split; only G1 remains.
-            const float cosNLc = fmaxf(1e-4f, devDot(Nf, Lc));
+            const float cosNLc  = fmaxf(1e-4f, devDot(Nf, Lc));
+            const float cosO_cc = Vc_local.z;   // dot(Vc, Nf), already clamped ≥ 1e-4
             throughput *= devSmithG1(cosNLc, cc_alpha);
             rayDir        = Lc;
             rayOrig       = vtx.pos + Nf * 1e-3f;
-            bsdfPdfForMis = 0.0f;  // clearcoat specular — MIS not applied on miss
+            bsdfPdfForMis = devGGX_PDF(cosO_cc, Hc_local.z, cc_alpha);
         }
         else
         {
@@ -557,10 +595,60 @@ extern "C" __global__ void __raygen__renderFrame()
                 }
 
                 const float cosNL = fmaxf(1e-4f, devDot(Nf, L));
-                throughput *= F * (devSmithG1(cosNL, alpha) / fmaxf(1e-4f, p_spec));
+                const float cosO  = V_local.z;   // dot(V, Nf), already clamped ≥ 1e-4
+
+                // Branch probability compensation — applied before NEE so both
+                // the direct and indirect contributions are correctly scaled.
+                throughput = throughput * (1.0f / fmaxf(1e-4f, p_spec));
+
+                // ── NEE: specular direct env-map lighting ──────────────────────
+                if (optixLaunchParams.envMarginalCdf)
+                {
+                    float3 neeDir; float neePdf;
+                    float3 neeL = sampleEnvMapIS(rnd(seed), rnd(seed), neeDir, neePdf);
+
+                    const float cosI_nee = devDot(neeDir, Nf);
+                    if (cosI_nee > 0.0f && neePdf > 0.0f)
+                    {
+                        const float3 H_nee     = devNormalize(V + neeDir);
+                        const float  cosH_nee  = fmaxf(0.0f, devDot(H_nee, Nf));
+                        const float  cosVH_nee = fmaxf(0.0f, devDot(V, H_nee));
+                        const float3 F_nee     = devFresnel(cosVH_nee, F0);
+                        const float  brdfCosI  = devGGX_BRDFCosI(cosI_nee, cosO, cosH_nee, alpha);
+
+                        if (brdfCosI > 0.0f)
+                        {
+                            uint32_t vis = 0u, dummy = 0u;
+                            optixTrace(
+                                optixLaunchParams.traversable,
+                                vtx.pos + Nf * 1e-3f, neeDir,
+                                1e-3f, 1e30f, 0.0f,
+                                OptixVisibilityMask(0xFF),
+                                OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
+                                | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+                                0, 1, 1,
+                                vis, dummy);
+
+                            if (vis)
+                            {
+                                // MIS power heuristic: pBsdf = (1-p_coat)*p_spec * GGX_PDF(neeDir)
+                                const float pGGX_nee = devGGX_PDF(cosO, cosH_nee, alpha);
+                                const float pBsdf    = (1.0f - p_coat) * p_spec * pGGX_nee;
+                                const float wNee     = neePdf * neePdf
+                                                     / fmaxf(neePdf * neePdf + pBsdf * pBsdf, 1e-12f);
+                                radiance += throughput * F_nee * brdfCosI / neePdf * neeL * wNee;
+                            }
+                        }
+                    }
+                }
+
+                // ── Continue path with BSDF-sampled direction ──────────────────
+                // p_spec already divided above; only the BRDF weight remains.
+                throughput *= F * devSmithG1(cosNL, alpha);
                 rayDir        = L;
                 rayOrig       = vtx.pos + Nf * 1e-3f;
-                bsdfPdfForMis = 0.0f;  // GGX specular — no diffuse NEE on miss
+                // Store GGX PDF so miss block can MIS-weight env-map hits
+                bsdfPdfForMis = devGGX_PDF(cosO, H_local.z, alpha);
             }
             else
             {
