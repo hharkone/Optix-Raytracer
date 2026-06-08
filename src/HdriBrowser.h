@@ -101,6 +101,7 @@ private:
     std::string             m_activePath;
     std::string             m_pendingFolder;  // set by draw(); consumed by uploadPending()
     std::vector<ThumbEntry> m_entries;        // accessed from main thread only
+    int                     m_thumbSizeIdx = 0; // 0=Large, 1=Medium, 2=Small
 
     // ── Thread pool ───────────────────────────────────────────────────────────
     std::vector<std::thread>    m_workers;

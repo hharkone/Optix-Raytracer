@@ -205,7 +205,11 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
 
     try
     {
-        for (const auto& dirEntry : std::filesystem::directory_iterator(fPath))
+        // skip_permission_denied: silently skip sub-folders we can't read instead
+        // of aborting the whole scan with an exception.
+        const auto iterOpts = std::filesystem::directory_options::skip_permission_denied;
+        for (const auto& dirEntry :
+             std::filesystem::recursive_directory_iterator(fPath, iterOpts))
         {
             // Use the no-ec overload so it reads from the cached directory-entry
             // status (fast, no extra syscall).  The ec overload on MSVC writes back
@@ -223,8 +227,10 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
             ThumbEntry te;
             // u8string() gives UTF-8 on every platform.  On Windows, .string()
             // would use the ANSI code page and corrupt paths containing ä/ö/å etc.
-            te.path  = dirEntry.path().u8string();
-            te.name  = dirEntry.path().filename().u8string();
+            te.path = dirEntry.path().u8string();
+            // Show the path relative to the chosen root so files in different
+            // sub-folders with the same filename are distinguishable in the grid.
+            te.name = std::filesystem::relative(dirEntry.path(), fPath).u8string();
             te.state = ThumbState::Loading;
             m_entries.push_back(std::move(te));
 
@@ -236,8 +242,8 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
     }
     catch (const std::exception& /*e*/)
     {
-        // Directory not accessible — m_entries stays empty and the UI will show
-        // "No .exr or .hdr files found in this folder."
+        // Root directory not accessible — m_entries stays empty and the UI will
+        // show "No .exr or .hdr files found in this folder."
     }
 
     m_workCv.notify_all();
@@ -353,6 +359,15 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
         }
     }
 
+    // ── Size selector — right-aligned on the same toolbar row ────────────────
+    {
+        static const char* const sizeLabels[] = { "Large", "Medium", "Small" };
+        const float comboW = 90.0f;
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - comboW);
+        ImGui::SetNextItemWidth(comboW);
+        ImGui::Combo("##thumbsz", &m_thumbSizeIdx, sizeLabels, 3);
+    }
+
     ImGui::Separator();
 
     // ── Thumbnail grid ────────────────────────────────────────────────────────
@@ -366,18 +381,24 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
         return false;
     }
 
+    // Display dimensions per size level (pixel data is always THUMB_W×THUMB_H).
+    static const int kDispW[] = { THUMB_W, 192, 128 };
+    static const int kDispH[] = { THUMB_H,  96,  64 };
+    const int dispW = kDispW[m_thumbSizeIdx];
+    const int dispH = kDispH[m_thumbSizeIdx];
+
     // Compute column count from the available width.
     const float padding  = 8.0f;
     const float labelH   = ImGui::GetTextLineHeightWithSpacing();
-    const float cellW    = static_cast<float>(THUMB_W) + padding;
-    const float cellH    = static_cast<float>(THUMB_H) + labelH + padding;
+    const float cellW    = static_cast<float>(dispW) + padding;
+    const float cellH    = static_cast<float>(dispH) + labelH + padding;
     const float avail    = ImGui::GetContentRegionAvail().x;
     const int   cols     = std::max(1, static_cast<int>(avail / cellW));
 
     ImGui::BeginChild("##thumbgrid", ImVec2(0.0f, 0.0f), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
-    const ImVec2 thumbSz(static_cast<float>(THUMB_W), static_cast<float>(THUMB_H));
+    const ImVec2 thumbSz(static_cast<float>(dispW), static_cast<float>(dispH));
 
     for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
     {
@@ -437,7 +458,7 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
         }
 
         // ── File name label ───────────────────────────────────────────────────
-        const float labelWidth = static_cast<float>(THUMB_W);
+        const float labelWidth = static_cast<float>(dispW);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + labelWidth);
         if (isActive)
             ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.00f, 1.0f), "%s",
