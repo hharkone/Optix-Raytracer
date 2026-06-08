@@ -38,9 +38,10 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 | **Resources** | Collapsible sub-categories: **Materials** (per-material PBR editor with albedo swatch preview) and **Textures** (loaded scene textures with dimensions and format) |
 | **Scene Graph** | Hierarchy tree of all scene nodes (click to select) |
 | **Node Properties** | Gizmo operation / space selector, TRS sliders, raw transform matrix, material editor, camera parameters for the selected node |
+| **HDRI Browser** | Async thumbnail grid for quick environment switching — select a folder (scanned recursively), thumbnails are generated on 4 background threads with log-average auto-exposure and Reinhard tone-mapping; size selector (Large / Medium / Small); active map highlighted; supports non-ASCII paths (ä/ö/å etc.) |
 
 ### Performance
-- **PTX hot-reload** — edit `devicePrograms.cu`, rebuild the PTX, and the shader reloads without restarting; accumulation resets automatically
+- **PTX hot-reload** — edit `device_programs.cu`, rebuild the PTX, and the shader reloads without restarting; accumulation resets automatically
 - **BLAS compaction** — per-mesh bottom-level AS built with size compaction
 - **Frame-time EMA** — smoothed frame time and Mrays/s display
 
@@ -165,6 +166,9 @@ cmake --build build --config Release --parallel
 | **Open glTF…** | Browse for `.gltf` or `.glb` scene file |
 | **Open Env Map…** | Browse for an equirectangular environment map (`.exr` or `.hdr`) |
 | **Clear** | Remove the environment map (falls back to procedural sky) |
+| **HDRI Browser → Select Folder…** | Pick a folder; all `.exr` and `.hdr` files found recursively are shown as thumbnails |
+| **HDRI Browser → thumbnail click** | Load the clicked file as the environment map |
+| **HDRI Browser → size combo** | Switch thumbnail display size: Large / Medium / Small |
 
 ---
 
@@ -172,38 +176,42 @@ cmake --build build --config Release --parallel
 
 ```
 Optix-Raytracer/
-├── CMakeLists.txt              Root build: project settings, FetchContent, subdirs
-├── build.sh                    Linux build script (configure + compile)
-├── build.bat / configure.bat   Windows build scripts
-├── imgui.ini                   Versioned default Dear ImGui window layout
-├── app.PNG                     Application screenshot
+├── CMakeLists.txt                  Root build: project settings, FetchContent, subdirs
+├── build.sh                        Linux build script (configure + compile)
+├── build.bat / configure.bat       Windows build scripts
+├── imgui.ini                       Versioned default Dear ImGui window layout
+├── app.PNG                         Application screenshot
 ├── cmake/
-│   ├── FindOptiX.cmake         Locates the OptiX SDK; creates the OptiX::OptiX target
+│   ├── FindOptiX.cmake             Locates the OptiX SDK; creates the OptiX::OptiX target
 │   ├── cuda_intellisense.props.in  VS property sheet: adds OptiX to IntelliSense
-│   └── InstallDefaultIni.cmake Install imgui.ini next to the exe on first build
+│   └── InstallDefaultIni.cmake     Install imgui.ini next to the exe on first build
 ├── shaders/
-│   ├── device_math.h           float3 operator overloads (+ − * / for device and host)
-│   ├── LaunchParams.h          GPU parameter struct shared between host and device
-│   ├── SceneData.h             MeshData and MaterialData (no STL; host + device)
-│   └── devicePrograms.cu       OptiX device programs — iterative path tracer,
-│                               HDRI importance sampling, NEE shadow rays, MIS
+│   ├── device_math.h               float3 operator overloads (+ − * / for device and host)
+│   ├── launch_params.h             GPU parameter struct shared between host and device
+│   ├── scene_data.h                MeshData and MaterialData (no STL; host + device)
+│   └── device_programs.cu          OptiX device programs — iterative path tracer,
+│                                   HDRI importance sampling, NEE shadow rays, MIS
 └── src/
-    ├── main.cpp                Entry point
-    ├── Application.h/.cpp      CUDA/OptiX init, ImGui UI, per-frame render loop
-    ├── VulkanContext.h/.cpp    Vulkan device, swapchain, render pass, display image,
-    │                           and per-frame present logic
-    ├── Matrix4x4.h             Row-major Matrix4x4 with multiply, inverse, and
-    │                           column-major converters for ImGuizmo interop
-    ├── Camera.h                Camera struct: transform, FOV, DoF parameters
-    ├── Node3D.h                Node3D base + MeshNode, CameraNode, GroupNode
-    ├── Scene.h/.cpp            Scene container: meshes, materials, textures, node tree
-    ├── Mesh.h                  Host-side mesh: separate vertex attribute arrays
-    ├── Texture.h/.cpp          RAII GPU texture class: RGBA8 / RGBA32F; EXR loading
-    │                           via OpenEXR (all codecs), HDR loading via stb_image,
-    │                           GPU upload, HDRI importance-sampling CDF
-    ├── Accel.h/.cpp            OptiX acceleration structure: BLAS per mesh + TLAS
-    ├── SceneLoader.h/.cpp      glTF 2.0 loader (tinygltf); populates Scene from file
-    └── CMakeLists.txt          Executable target, include paths, link libraries
+    ├── main.cpp                    Entry point
+    ├── application.h/.cpp          CUDA/OptiX init, ImGui UI, per-frame render loop
+    ├── vulkan_context.h/.cpp       Vulkan device, swapchain, render pass, display image,
+    │                               and per-frame present logic
+    ├── hdri_browser.h/.cpp         Async HDRI/EXR thumbnail browser panel — worker thread
+    │                               pool (4 threads), log-average auto-exposure, Reinhard
+    │                               tone-map, box-filter downsample, recursive folder scan
+    ├── matrix4x4.h                 Row-major Matrix4x4 with multiply, inverse, and
+    │                               column-major converters for ImGuizmo interop
+    ├── camera.h                    Camera struct: transform, FOV, DoF parameters
+    ├── node_3d.h                   Node3D base + MeshNode, CameraNode, GroupNode
+    ├── scene.h/.cpp                Scene container: meshes, materials, textures, node tree
+    ├── mesh.h                      Host-side mesh: separate vertex attribute arrays
+    ├── texture.h/.cpp              RAII GPU texture: RGBA8 / RGBA32F; EXR loading via
+    │                               OpenEXR (all codecs), HDR loading via stb_image,
+    │                               GPU upload, HDRI importance-sampling CDF;
+    │                               UTF-8 path support on Windows (_wfopen / WideFileStream)
+    ├── accel.h/.cpp                OptiX acceleration structure: BLAS per mesh + TLAS
+    ├── scene_loader.h/.cpp         glTF 2.0 loader (tinygltf); populates Scene from file
+    └── CMakeLists.txt              Executable target, include paths, link libraries
 ```
 
 ---
@@ -243,7 +251,7 @@ The Vulkan validation layer may be printing errors to stderr. Run from a termina
 Adjust the **Env Exposure** slider in the Raytracer panel. For scenes with emissive materials adjust the emissive scale on the material.
 
 **Scene with glass converges slowly despite HDRI**  
-HDRI NEE fires only on diffuse bounces. Paths that escape through glass (transmission) follow the BSDF and are unaffected by NEE — this is correct behaviour. Increase `MAX_BOUNCES` in `devicePrograms.cu` if light needs more bounces to exit the glass.
+HDRI NEE fires only on diffuse bounces. Paths that escape through glass (transmission) follow the BSDF and are unaffected by NEE — this is correct behaviour. Increase `MAX_BOUNCES` in `device_programs.cu` if light needs more bounces to exit the glass.
 
 **Depth of field has no visible effect**  
 Ensure f-stop is low (try f/2 or f/1.4) and that objects in the scene are at a different distance from the **Focus Distance** setting in the Node Properties camera panel.
