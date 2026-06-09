@@ -10,11 +10,11 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 
 ### Rendering
 - **Monte Carlo path tracing** with up to 16 bounces and per-pixel progressive accumulation
-- **PBR materials** (GGX-VNDF microfacet BRDF) — albedo, roughness, metallic, clearcoat, clearcoat roughness, emission, transmission, IOR, and absorption distance
+- **PBR materials** (GGX-VNDF microfacet BRDF) — albedo, roughness, metallic, clearcoat, clearcoat roughness, emission, transmission, IOR, and absorption distance; sRGB albedo textures and colour values are linearised before lighting calculations
 - **Probabilistic lobe selection** — clearcoat → specular → diffuse/refraction, each weighted by Fresnel probability for energy conservation
-- **Stochastic refraction** — rough dielectric transmission with Snell's law and GGX microfacet normal sampling; Beer-Lambert volumetric absorption for coloured glass
-- **Environment lighting** — equirectangular EXR maps (`.exr`, all codecs: NONE / RLE / ZIP / PIZ / PXR24 / B44 / DWAA / DWAB) or Radiance HDR maps (`.hdr`) or procedural sky gradient, with rotation and exposure (EV) controls
-- **HDRI importance sampling** — 2D luminance CDF built at load time; Next Event Estimation (NEE) fires shadow rays toward bright env-map regions at every diffuse bounce; Multiple Importance Sampling (MIS) power heuristic prevents double-counting with the regular BSDF path
+- **Stochastic refraction** — rough dielectric transmission with Snell's law and GGX microfacet normal sampling; Beer-Lambert volumetric absorption for coloured glass; **thin-walled glass** mode skips volume absorption and tints NEE shadow rays with the glass colour for correct single-surface light filtering
+- **Environment lighting** — equirectangular EXR maps (`.exr`, all codecs: NONE / RLE / ZIP / PIZ / PXR24 / B44 / DWAA / DWAB) or Radiance HDR maps (`.hdr`) or procedural sky gradient, with rotation and exposure (EV) controls; NaN and inf pixels are clamped at load time (NaN → 0, inf → 65504) so over-bright sources never corrupt thumbnails or the CDF
+- **HDRI importance sampling** — 2D luminance CDF built at load time; NEE fires shadow rays toward bright env-map regions at every diffuse and specular (GGX) bounce; MIS power heuristic with the GGX VNDF PDF prevents double-counting on specular escape paths
 - **Thin-lens depth of field** — focal length, sensor size, f-stop, focus distance, and adjustable bokeh edge bias
 - **Reinhard tone mapping** with sRGB gamma encoding
 - **OptiX AI denoiser** — normal + albedo guide layers, configurable denoise interval, keeps the last denoised frame while accumulating
@@ -38,7 +38,7 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 | **Resources** | Collapsible sub-categories: **Materials** (per-material PBR editor with albedo swatch preview) and **Textures** (loaded scene textures with dimensions and format) |
 | **Scene Graph** | Hierarchy tree of all scene nodes (click to select) |
 | **Node Properties** | Gizmo operation / space selector, TRS sliders, raw transform matrix, material editor, camera parameters for the selected node |
-| **HDRI Browser** | Async thumbnail grid for quick environment switching — select a folder (scanned recursively), thumbnails are generated on 4 background threads with log-average auto-exposure and Reinhard tone-mapping; size selector (Large / Medium / Small); active map highlighted; supports non-ASCII paths (ä/ö/å etc.) |
+| **HDRI Browser** | Async thumbnail grid for quick environment switching — select a folder (scanned recursively); **folder-grouped layout** with section headers (bare filename shown, full relative path in tooltip); **persistent disk cache** (~131 KB/entry at `{exe}/thumbnails/`, FNV-1a hash + mtime/size validation, write-then-rename for crash safety) skips the full HDR decode on warm loads; root-folder files prioritised in the load queue; thumbnails generated on 16 background threads with log-average auto-exposure and Reinhard tone-mapping; animated arc spinner while loading; size selector (Large / Medium / Small); active map highlighted; supports non-ASCII paths (ä/ö/å etc.) |
 
 ### Performance
 - **PTX hot-reload** — edit `device_programs.cu`, rebuild the PTX, and the shader reloads without restarting; accumulation resets automatically
@@ -197,8 +197,10 @@ Optix-Raytracer/
     ├── vulkan_context.h/.cpp       Vulkan device, swapchain, render pass, display image,
     │                               and per-frame present logic
     ├── hdri_browser.h/.cpp         Async HDRI/EXR thumbnail browser panel — worker thread
-    │                               pool (4 threads), log-average auto-exposure, Reinhard
-    │                               tone-map, box-filter downsample, recursive folder scan
+    │                               pool (16 threads), folder-grouped layout, persistent disk
+    │                               cache (FNV-1a hash + mtime/size validation), root-first
+    │                               load order, log-average auto-exposure, Reinhard tone-map,
+    │                               box-filter downsample, recursive folder scan
     ├── matrix4x4.h                 Row-major Matrix4x4 with multiply, inverse, and
     │                               column-major converters for ImGuizmo interop
     ├── camera.h                    Camera struct: transform, FOV, DoF parameters
@@ -207,8 +209,9 @@ Optix-Raytracer/
     ├── mesh.h                      Host-side mesh: separate vertex attribute arrays
     ├── texture.h/.cpp              RAII GPU texture: RGBA8 / RGBA32F; EXR loading via
     │                               OpenEXR (all codecs), HDR loading via stb_image,
-    │                               GPU upload, HDRI importance-sampling CDF;
-    │                               UTF-8 path support on Windows (_wfopen / WideFileStream)
+    │                               NaN/inf pixel sanitisation at load time, GPU upload,
+    │                               HDRI importance-sampling CDF; UTF-8 path support on
+    │                               Windows (_wfopen / WideFileStream)
     ├── accel.h/.cpp                OptiX acceleration structure: BLAS per mesh + TLAS
     ├── scene_loader.h/.cpp         glTF 2.0 loader (tinygltf); populates Scene from file
     └── CMakeLists.txt              Executable target, include paths, link libraries
