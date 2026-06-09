@@ -223,6 +223,16 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
     // bytes as UTF-8 and stores them as UTF-16 internally.
     const std::filesystem::path fPath = std::filesystem::u8path(folderPath);
 
+    // Collect matching files first so they can be sorted before enqueueing.
+    // Root-level files are pushed to the front of the work queue so they
+    // appear ready in the browser before the deeper subdirectory files do.
+    struct ScannedFile
+    {
+        std::filesystem::path absPath;
+        std::filesystem::path relPath;  // relative to fPath
+    };
+    std::vector<ScannedFile> scanned;
+
     try
     {
         // skip_permission_denied: silently skip sub-folders we can't read instead
@@ -251,27 +261,47 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
                 continue;
             }
 
-            const int idx = static_cast<int>(m_entries.size());
-            ThumbEntry te;
-            // u8string() gives UTF-8 on every platform.  On Windows, .string()
-            // would use the ANSI code page and corrupt paths containing ä/ö/å etc.
-            te.path = dirEntry.path().u8string();
-            // Show the path relative to the chosen root so files in different
-            // sub-folders with the same filename are distinguishable in the grid.
-            te.name = std::filesystem::relative(dirEntry.path(), fPath).u8string();
-            te.state = ThumbState::Loading;
-            m_entries.push_back(std::move(te));
-
-            {
-                std::lock_guard<std::mutex> lock(m_workMutex);
-                m_workQueue.push({ idx, m_entries.back().path });
-            }
+            scanned.push_back({
+                dirEntry.path(),
+                std::filesystem::relative(dirEntry.path(), fPath)
+            });
         }
     }
     catch (const std::exception& /*e*/)
     {
         // Root directory not accessible — m_entries stays empty and the UI will
         // show "No .exr or .hdr files found in this folder."
+    }
+
+    // Sort: root files (no parent component) first, then subdirectory files.
+    // Within each group, keep the natural alphabetical order from the iterator.
+    std::stable_sort(scanned.begin(), scanned.end(),
+        [](const ScannedFile& a, const ScannedFile& b)
+        {
+            const bool aRoot = a.relPath.parent_path().empty();
+            const bool bRoot = b.relPath.parent_path().empty();
+            if (aRoot != bRoot)
+                return aRoot;               // root before subdir
+            return a.relPath < b.relPath;   // alphabetical within each group
+        });
+
+    // Build entries and work queue in sorted order.
+    {
+        std::lock_guard<std::mutex> lock(m_workMutex);
+        for (auto& f : scanned)
+        {
+            const int idx = static_cast<int>(m_entries.size());
+            ThumbEntry te;
+            // u8string() gives UTF-8 on every platform.  On Windows, .string()
+            // would use the ANSI code page and corrupt paths containing ä/ö/å etc.
+            te.path  = f.absPath.u8string();
+            // Show the path relative to the chosen root so files in different
+            // sub-folders with the same filename are distinguishable in the grid.
+            te.name  = f.relPath.u8string();
+            te.state = ThumbState::Loading;
+            m_entries.push_back(std::move(te));
+            m_workQueue.push({ idx, m_entries.back().path });
+        }
     }
 
     m_workCv.notify_all();
