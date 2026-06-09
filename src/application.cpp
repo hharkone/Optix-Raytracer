@@ -335,7 +335,8 @@ void Application::buildPipeline(const std::string& ptxDir)
     pipelineOpts.usesMotionBlur                   = 0;
     pipelineOpts.traversableGraphFlags            =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    pipelineOpts.numPayloadValues                 = 2;  // p0/p1 = packed PathVertex pointer
+    pipelineOpts.numPayloadValues                 = 4;  // radiance: p0/p1 = packed PathVertex ptr
+                                                        //  shadow: p0=vis, p1/p2/p3=RGB filter
     pipelineOpts.numAttributeValues               = 2;  // barycentrics (built-in triangle)
     pipelineOpts.exceptionFlags                   = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineOpts.pipelineLaunchParamsVariableName = "optixLaunchParams";

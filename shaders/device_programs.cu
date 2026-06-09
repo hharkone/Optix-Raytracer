@@ -632,25 +632,35 @@ extern "C" __global__ void __raygen__renderFrame()
 
                         if (brdfCosI > 0.0f)
                         {
-                            uint32_t vis = 0u, dummy = 0u;
+                            // Shadow ray: p0=vis, p1/p2/p3=RGB colour filter (init 1.0).
+                            // No TERMINATE_ON_FIRST_HIT — anyhit handles termination
+                            // explicitly so thin-walled filter accumulation is in ray order.
+                            uint32_t shadowVis = 0u;
+                            uint32_t shadowFR  = __float_as_uint(1.0f);
+                            uint32_t shadowFG  = __float_as_uint(1.0f);
+                            uint32_t shadowFB  = __float_as_uint(1.0f);
                             optixTrace(
                                 optixLaunchParams.traversable,
                                 vtx.pos + Nf * 1e-3f, neeDir,
                                 1e-3f, 1e30f, 0.0f,
                                 OptixVisibilityMask(0xFF),
-                                OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
-                                | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+                                OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
                                 0, 1, 1,
-                                vis, dummy);
+                                shadowVis, shadowFR, shadowFG, shadowFB);
 
-                            if (vis)
+                            if (shadowVis)
                             {
+                                const float3 shadowFilter = make_float3(
+                                    __uint_as_float(shadowFR),
+                                    __uint_as_float(shadowFG),
+                                    __uint_as_float(shadowFB));
                                 // MIS power heuristic: pBsdf = (1-p_coat)*p_spec * GGX_PDF(neeDir)
                                 const float pGGX_nee = devGGX_PDF(cosO, cosH_nee, alpha);
                                 const float pBsdf    = (1.0f - p_coat) * p_spec * pGGX_nee;
                                 const float wNee     = neePdf * neePdf
                                                      / fmaxf(neePdf * neePdf + pBsdf * pBsdf, 1e-12f);
-                                radiance += throughput * F_nee * brdfCosI / neePdf * neeL * wNee;
+                                radiance += throughput * shadowFilter
+                                          * F_nee * brdfCosI / neePdf * neeL * wNee;
                             }
                         }
                     }
@@ -690,20 +700,29 @@ extern "C" __global__ void __raygen__renderFrame()
                         const float cosL = devDot(neeDir, Nf);
                         if (cosL > 0.0f && neePdf > 0.0f)
                         {
-                            // Shadow ray: SBT miss index 1 → __miss__shadow sets p0=1
-                            uint32_t vis = 0u, dummy = 0u;
+                            // Shadow ray: SBT miss index 1 → __miss__shadow sets p0=1.
+                            // p1/p2/p3 carry the accumulated thin-walled colour filter.
+                            // No TERMINATE_ON_FIRST_HIT — anyhit calls optixTerminateRay()
+                            // for opaque surfaces so thin-walled filter order is near-to-far.
+                            uint32_t shadowVis = 0u;
+                            uint32_t shadowFR  = __float_as_uint(1.0f);
+                            uint32_t shadowFG  = __float_as_uint(1.0f);
+                            uint32_t shadowFB  = __float_as_uint(1.0f);
                             optixTrace(
                                 optixLaunchParams.traversable,
                                 vtx.pos + Nf * 1e-3f, neeDir,
                                 1e-3f, 1e30f, 0.0f,
                                 OptixVisibilityMask(0xFF),
-                                OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
-                                | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+                                OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
                                 0, 1, 1,   // offset=0, stride=1, missIndex=1
-                                vis, dummy);
+                                shadowVis, shadowFR, shadowFG, shadowFB);
 
-                            if (vis)
+                            if (shadowVis)
                             {
+                                const float3 shadowFilter = make_float3(
+                                    __uint_as_float(shadowFR),
+                                    __uint_as_float(shadowFG),
+                                    __uint_as_float(shadowFB));
                                 // throughput already carries kNS = (1-F)*albedo/(1-p_spec)
                                 // Lambertian: f×cosθ = kNS * (cosθ/π) evaluated at neeDir
                                 const float kInvPi = 0.31830988618f;
@@ -711,7 +730,8 @@ extern "C" __global__ void __raygen__renderFrame()
                                                    * (1.0f - p_trans) * cosL * kInvPi;
                                 const float wNee   = (neePdf * neePdf)
                                                    / (neePdf * neePdf + pBsdf * pBsdf);
-                                radiance += throughput * (cosL * kInvPi / neePdf) * neeL * wNee;
+                                radiance += throughput * shadowFilter
+                                          * (cosL * kInvPi / neePdf) * neeL * wNee;
                             }
                         }
                     }
@@ -860,24 +880,42 @@ extern "C" __global__ void __miss__shadow()
     optixSetPayload_0(1u);
 }
 
-// ─── Any-hit — shadow ray thin-walled pass-through ───────────────────────────
+// ─── Any-hit — shadow ray thin-walled colour filter ──────────────────────────
 // Only reached by NEE shadow rays; radiance rays set OPTIX_RAY_FLAG_DISABLE_ANYHIT
 // so this program is never invoked for primary or bounce rays.
 //
-// Thin-walled surfaces are transparent to shadow rays: calling optixIgnoreIntersection()
-// discards the hit and lets traversal continue toward the light source.
-// TERMINATE_ON_FIRST_HIT on shadow rays still terminates correctly for non-thin-walled
-// geometry because only unignored intersections count as "first hit".
+// Shadow rays carry 4 payload registers:
+//   p0        : vis  — 0 while in flight; set to 1 by __miss__shadow on escape
+//   p1/p2/p3  : accumulated colour filter (float bits, caller-initialised to 1.0)
+//
+// Thin-walled surfaces multiply the running filter by their linearised albedo and
+// call optixIgnoreIntersection() so BVH traversal continues toward the light.
+// Non-thin-walled surfaces call optixTerminateRay() — this is the correct way to
+// signal occlusion when TERMINATE_ON_FIRST_HIT is not set, and it guarantees
+// that the first opaque hit (nearest-to-farthest in BVH order) wins.
 
 extern "C" __global__ void __anyhit__radiance()
 {
     const MeshData& mesh =
         *reinterpret_cast<const MeshData*>(optixGetSbtDataPointer());
-    if (mesh.materialIndex >= 0
+    if (   mesh.materialIndex >= 0
         && optixLaunchParams.materials
         && optixLaunchParams.materials[mesh.materialIndex].thinWalled)
     {
-        optixIgnoreIntersection();
+        // Accumulate this surface's linearised albedo into the colour filter.
+        const float3 alb = srgbToLinear3(
+            optixLaunchParams.materials[mesh.materialIndex].albedo);
+        optixSetPayload_1(__float_as_uint(
+            __uint_as_float(optixGetPayload_1()) * alb.x));
+        optixSetPayload_2(__float_as_uint(
+            __uint_as_float(optixGetPayload_2()) * alb.y));
+        optixSetPayload_3(__float_as_uint(
+            __uint_as_float(optixGetPayload_3()) * alb.z));
+        optixIgnoreIntersection();          // keep traversal going past the glass
+    }
+    else
+    {
+        optixTerminateRay();                // opaque surface — shadow ray is blocked
     }
 }
 

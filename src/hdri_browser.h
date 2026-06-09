@@ -16,7 +16,7 @@
 // keeps GPU memory modest (~128 KB per thumbnail as RGBA8).
 inline constexpr int THUMB_W       = 256;
 inline constexpr int THUMB_H       = 128;
-inline constexpr int THUMB_WORKERS = 4;   // max concurrent loader threads
+inline constexpr int THUMB_WORKERS = 8;   // max concurrent loader threads
 
 // ─── Per-file state ───────────────────────────────────────────────────────────
 
