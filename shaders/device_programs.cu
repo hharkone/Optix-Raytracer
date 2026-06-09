@@ -70,6 +70,7 @@ struct PathVertex
     float  absorptionDistance;  // world-space units for full albedo absorption
     float  clearcoat;           // clearcoat layer intensity [0, 1]
     float  clearcoatRoughness;  // clearcoat layer roughness [0, 1]
+    int    thinWalled;          // 1 = zero-thickness surface; pass through without refraction
     float  t;                   // ray travel distance to this hit (Beer-Lambert)
     int    hit;          // 1 = geometry hit, 0 = ray escaped to background
 };
@@ -473,7 +474,7 @@ extern "C" __global__ void __raygen__renderFrame()
             rayOrig, rayDir,
             1e-3f, 1e30f, 0.0f,
             OptixVisibilityMask(0xFF),
-            OPTIX_RAY_FLAG_NONE,
+            OPTIX_RAY_FLAG_DISABLE_ANYHIT,  // anyhit only needed for shadow rays
             0, 1, 0,
             p0, p1);
 
@@ -726,7 +727,20 @@ extern "C" __global__ void __raygen__renderFrame()
                 }
                 else
                 {
-                    bsdfPdfForMis = 0.0f;  // refraction — no diffuse NEE on next hit
+                    bsdfPdfForMis = 0.0f;  // refraction/pass-through — no diffuse NEE on next hit
+
+                if (vtx.thinWalled)
+                {
+                    // Zero-thickness surface: front and back refractions cancel.
+                    // Pass the ray through with no direction change and no Beer-Lambert
+                    // absorption (there is no medium interior to accumulate through).
+                    // Nf already faces the incoming ray (computed above), so -Nf always
+                    // points to the far side regardless of which face was hit.
+                    rayOrig = vtx.pos - Nf * 1e-3f;
+                    // rayDir and absorb are intentionally left unchanged.
+                }
+                else
+                {
                 // ── 3. Refraction (rough Snell's law via GGX microfacet) ─────────
                 // vtx.N is the true outward geometry normal — used only for the
                 // entering/exiting test, not for the microfacet direction.
@@ -779,6 +793,7 @@ extern "C" __global__ void __raygen__renderFrame()
                 // On TIR devRefract writes the reflected direction; offset stays on
                 // the same side.  On true refraction offset to the far side.
                 rayOrig = vtx.pos + faceN * (refracted ? -1e-3f : 1e-3f);
+                }   // end thick refraction else (not thin-walled)
                 }   // end refraction else
             }   // end non-specular else (diffuse / refraction)
         }   // end base material else (specular / diffuse / refraction) = clearcoat else
@@ -843,6 +858,27 @@ extern "C" __global__ void __miss__radiance()
 extern "C" __global__ void __miss__shadow()
 {
     optixSetPayload_0(1u);
+}
+
+// ─── Any-hit — shadow ray thin-walled pass-through ───────────────────────────
+// Only reached by NEE shadow rays; radiance rays set OPTIX_RAY_FLAG_DISABLE_ANYHIT
+// so this program is never invoked for primary or bounce rays.
+//
+// Thin-walled surfaces are transparent to shadow rays: calling optixIgnoreIntersection()
+// discards the hit and lets traversal continue toward the light source.
+// TERMINATE_ON_FIRST_HIT on shadow rays still terminates correctly for non-thin-walled
+// geometry because only unignored intersections count as "first hit".
+
+extern "C" __global__ void __anyhit__radiance()
+{
+    const MeshData& mesh =
+        *reinterpret_cast<const MeshData*>(optixGetSbtDataPointer());
+    if (mesh.materialIndex >= 0
+        && optixLaunchParams.materials
+        && optixLaunchParams.materials[mesh.materialIndex].thinWalled)
+    {
+        optixIgnoreIntersection();
+    }
 }
 
 // ─── Scene texture sampling helper ───────────────────────────────────────────
@@ -929,6 +965,7 @@ extern "C" __global__ void __closesthit__radiance()
         vtx->absorptionDistance = fmaxf(mat.absorptionDistance, 1e-4f);
         vtx->clearcoat          = mat.clearcoat;
         vtx->clearcoatRoughness = mat.clearcoatRoughness;
+        vtx->thinWalled         = mat.thinWalled;
     }
     else
     {
@@ -941,6 +978,7 @@ extern "C" __global__ void __closesthit__radiance()
         vtx->absorptionDistance = 1.0f;
         vtx->clearcoat          = 0.0f;
         vtx->clearcoatRoughness = 0.0f;
+        vtx->thinWalled         = 0;
     }
 
     vtx->hit = 1;

@@ -378,8 +378,8 @@ void Application::buildPipeline(const std::string& ptxDir)
     pgDesc.kind                              = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
     pgDesc.hitgroup.moduleCH                  = m_module;
     pgDesc.hitgroup.entryFunctionNameCH       = "__closesthit__radiance";
-    pgDesc.hitgroup.moduleAH                  = nullptr;
-    pgDesc.hitgroup.entryFunctionNameAH       = nullptr;
+    pgDesc.hitgroup.moduleAH                  = m_module;
+    pgDesc.hitgroup.entryFunctionNameAH       = "__anyhit__radiance";
     pgDesc.hitgroup.moduleIS                  = nullptr;  // built-in triangle IS
     pgDesc.hitgroup.entryFunctionNameIS       = nullptr;
     OPTIX_CHECK(optixProgramGroupCreate(
@@ -1686,6 +1686,21 @@ bool Application::tick()
                         if (ImGui::SliderFloat("Coat Roughness", &mats[i].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
                             anyMatChanged = true;
 
+                        {
+                            bool tw = mats[i].thinWalled != 0;
+                            if (ImGui::Checkbox("Thin Walled", &tw))
+                            {
+                                mats[i].thinWalled = tw ? 1 : 0;
+                                anyMatChanged = true;
+                            }
+                            if (ImGui::IsItemHovered())
+                            {
+                                ImGui::SetTooltip(
+                                    "Shadow rays pass through this surface.\n"
+                                    "Use for window glass to speed up interior lighting convergence.");
+                            }
+                        }
+
                         ImGui::Separator();
                         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
                         if (ImGui::DragFloat2("Tiling",  &mats[i].uvTransform.x, 0.01f, 0.0f, 0.0f, "%.3f"))
@@ -1913,6 +1928,21 @@ bool Application::tick()
                     if (ImGui::SliderFloat("Coat Roughness", &mats[matIdx].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
                     {
                         anyChanged = true;
+                    }
+
+                    {
+                        bool tw = mats[matIdx].thinWalled != 0;
+                        if (ImGui::Checkbox("Thin Walled", &tw))
+                        {
+                            mats[matIdx].thinWalled = tw ? 1 : 0;
+                            anyChanged = true;
+                        }
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip(
+                                "Shadow rays pass through this surface.\n"
+                                "Use for window glass to speed up interior lighting convergence.");
+                        }
                     }
                 }
                 ImGui::PopID();

@@ -38,6 +38,8 @@ struct MaterialData
 
     float  clearcoat          = 0.0f;  // KHR_materials_clearcoat intensity [0, 1]
     float  clearcoatRoughness = 0.0f;  // clearcoat layer roughness [0, 1]
+
+    int    thinWalled = 0;  // 1 = invisible to NEE shadow rays (pass-through)
 };
 
 #endif // OPTIX_RAYTRACER_SCENE_DATA_H
