@@ -15,7 +15,9 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <string>
+#include <vector>
 
 // ─── Construction / Destruction ───────────────────────────────────────────────
 
@@ -451,100 +453,175 @@ bool HdriBrowser::draw(bool* open, std::string& selectedPath)
     const ImVec2 buttonSz(static_cast<float>(dispW) + 2.0f * fp,
                           static_cast<float>(dispH) + 2.0f * fpy);
 
+    // ── Build folder groups ───────────────────────────────────────────────────
+    // std::map keeps folder keys alphabetically sorted.
+    // Files directly in the root directory map to the empty-string key "".
+    std::map<std::string, std::vector<int>> groups;
     for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
     {
-        auto& e = m_entries[i];
+        const std::string folder =
+            std::filesystem::u8path(m_entries[i].name)
+                .parent_path()
+                .generic_u8string();
+        groups[folder].push_back(i);
+    }
 
-        if (i % cols != 0)
+    // Show folder headers only when there is more than one group, or when the
+    // single group is a named subfolder (not the root).
+    const bool multiGroup = groups.size() > 1
+                         || (groups.size() == 1 && !groups.begin()->first.empty());
+
+    // ── Render each folder group ──────────────────────────────────────────────
+    for (auto& [folder, indices] : groups)
+    {
+        if (multiGroup)
         {
-            ImGui::SameLine(0.0f, padding);
+            const std::string header = folder.empty() ? "/" : folder;
+            ImGui::SeparatorText(header.c_str());
         }
 
-        ImGui::PushID(i);
-        ImGui::BeginGroup();
-
-        const bool isActive = !m_activePath.empty() && (e.path == m_activePath);
-
-        if (e.state == ThumbState::GPUReady && e.texture.valid())
+        int col = 0;
+        for (int idx : indices)
         {
-            if (isActive)
+            auto& e = m_entries[idx];
+
+            // Bare filename for the label; keep e.name (full relative path) for tooltips.
+            const std::string filename =
+                std::filesystem::u8path(e.name).filename().u8string();
+
+            if (col > 0)
             {
+                ImGui::SameLine(0.0f, padding);
+            }
+
+            ImGui::PushID(idx);
+            ImGui::BeginGroup();
+
+            const bool isActive = !m_activePath.empty() && (e.path == m_activePath);
+
+            if (e.state == ThumbState::GPUReady && e.texture.valid())
+            {
+                if (isActive)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button,
+                                          ImVec4(0.20f, 0.50f, 0.90f, 0.60f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                          ImVec4(0.30f, 0.60f, 1.00f, 0.80f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                                          ImVec4(0.10f, 0.40f, 0.80f, 1.00f));
+                }
+
+                if (ImGui::ImageButton("##img",
+                        reinterpret_cast<ImTextureID>(e.texture.descSet), thumbSz))
+                {
+                    selectedPath = e.path;
+                    m_activePath = e.path;
+                    selected     = true;
+                }
+
+                if (isActive)
+                {
+                    ImGui::PopStyleColor(3);
+                }
+
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("%s", e.name.c_str());
+                }
+            }
+            else if (e.state == ThumbState::Error)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.40f, 0.10f, 0.10f, 1.0f));
+                ImGui::Button("##err", buttonSz);
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Error: %s\n%s", e.name.c_str(), e.errorMsg.c_str());
+                }
+            }
+            else
+            {
+                // Loading placeholder — dark background + rotating arc spinner
                 ImGui::PushStyleColor(ImGuiCol_Button,
-                                      ImVec4(0.20f, 0.50f, 0.90f, 0.60f));
+                                      ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                      ImVec4(0.30f, 0.60f, 1.00f, 0.80f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                                      ImVec4(0.10f, 0.40f, 0.80f, 1.00f));
+                                      ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+                ImGui::Button("##load", buttonSz);
+                ImGui::PopStyleColor(2);
+
+                // Arc spinner drawn directly onto the window draw list so it
+                // sits on top of the button without disturbing the ImGui layout.
+                const ImVec2 bMin   = ImGui::GetItemRectMin();
+                const ImVec2 bMax   = ImGui::GetItemRectMax();
+                const ImVec2 center = ImVec2((bMin.x + bMax.x) * 0.5f,
+                                             (bMin.y + bMax.y) * 0.5f);
+                const float  radius = std::min(bMax.x - bMin.x,
+                                               bMax.y - bMin.y) * 0.22f;
+
+                constexpr float kPi    = 3.14159265358979f;
+                constexpr float kTwoPi = 2.0f * kPi;
+                const float     t      = static_cast<float>(ImGui::GetTime());
+
+                // Rotation: one full spin every ~0.33 s
+                const float rotation = t * kTwoPi / 0.33f;
+
+                // Sweep oscillates between ~20° and ~280° on a ~1.5 s sine cycle
+                // so the arc visibly stretches and compresses while it spins.
+                constexpr float kMinSweep = kPi * 0.11f;   // ~20°
+                constexpr float kMaxSweep = kPi * 1.55f;   // ~279°
+                const float sweepT     = 0.5f + 0.5f * std::sinf(t * kTwoPi / 1.5f);
+                const float sweep      = kMinSweep + (kMaxSweep - kMinSweep) * sweepT;
+
+                const float angleStart = rotation;
+                const float angleEnd   = rotation + sweep;
+
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+
+                // Faint full-circle track
+                dl->AddCircle(center, radius, IM_COL32(255, 255, 255, 10), 32, 4.0f);
+                // Bright animated arc
+                dl->PathArcTo(center, radius, angleStart, angleEnd, 24);
+                dl->PathStroke(IM_COL32(200, 210, 255, 80), false, 2.5f);
+
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Loading: %s", e.name.c_str());
+                }
             }
 
-            if (ImGui::ImageButton("##img",
-                    reinterpret_cast<ImTextureID>(e.texture.descSet), thumbSz))
-            {
-                selectedPath = e.path;
-                m_activePath = e.path;
-                selected     = true;
-            }
-
+            // ── File name label ───────────────────────────────────────────────
+            // Show only the bare filename (no subfolder prefix).
+            // Wrap at the button's outer width (image + 2 × FramePadding).
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + buttonSz.x);
             if (isActive)
             {
-                ImGui::PopStyleColor(3);
+                ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.00f, 1.0f), "%s",
+                                   filename.c_str());
             }
-
-            if (ImGui::IsItemHovered())
+            else
             {
-                ImGui::SetTooltip("%s", e.name.c_str());
+                ImGui::TextUnformatted(filename.c_str());
             }
-        }
-        else if (e.state == ThumbState::Error)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.40f, 0.10f, 0.10f, 1.0f));
-            ImGui::Button("##err", buttonSz);
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered())
+            ImGui::PopTextWrapPos();
+
+            // Zero-size Dummy after the label.  Its purpose is purely to extend
+            // the group's bounding-box max-y to include the trailing ItemSpacing.y
+            // that follows the label.  Without it, EndGroup's ItemSize reports a
+            // height that is one ItemSpacing.y short, making the row advance by
+            // cellH - ItemSpacing.y instead of cellH.  A Dummy placed *outside*
+            // EndGroup would overwrite CursorPosPrevLine.y and break SameLine's
+            // row-start y for subsequent columns.
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+
+            ImGui::EndGroup();
+            ImGui::PopID();
+
+            ++col;
+            if (col >= cols)
             {
-                ImGui::SetTooltip("Error: %s\n%s", e.name.c_str(), e.errorMsg.c_str());
+                col = 0;
             }
         }
-        else
-        {
-            // Loading placeholder — pulsing grey box
-            const float t      = std::fmod(static_cast<float>(ImGui::GetTime()) * 1.5f,
-                                           1.0f);
-            const float bright = 0.12f + 0.08f * t;
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(bright, bright, bright, 1.0f));
-            ImGui::Button("##load", buttonSz);
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("Loading: %s", e.name.c_str());
-            }
-        }
-
-        // ── File name label ───────────────────────────────────────────────────
-        // Wrap at the button's outer width (image + 2 × FramePadding).
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + buttonSz.x);
-        if (isActive)
-        {
-            ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.00f, 1.0f), "%s",
-                               e.name.c_str());
-        }
-        else
-        {
-            ImGui::TextUnformatted(e.name.c_str());
-        }
-        ImGui::PopTextWrapPos();
-
-        // Zero-size Dummy after the label.  Its purpose is purely to extend
-        // the group's bounding-box max-y to include the trailing ItemSpacing.y
-        // that follows the label.  Without it, EndGroup's ItemSize reports a
-        // height that is one ItemSpacing.y short, making the row advance by
-        // cellH - ItemSpacing.y instead of cellH.  A Dummy placed *outside*
-        // EndGroup would overwrite CursorPosPrevLine.y and break SameLine's
-        // row-start y for subsequent columns.
-        ImGui::Dummy(ImVec2(0.0f, 0.0f));
-
-        ImGui::EndGroup();
-        ImGui::PopID();
     }
 
     ImGui::EndChild();
