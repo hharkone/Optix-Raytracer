@@ -14,10 +14,24 @@
 #include <cassert>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 #include <vector>
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// FNV-1a 64-bit hash — fast, dependency-free, good distribution for file paths.
+static uint64_t fnv1a64(const std::string& s)
+{
+    uint64_t h = 14695981039346656037ULL;
+    for (unsigned char c : s)
+        h = (h ^ static_cast<uint64_t>(c)) * 1099511628211ULL;
+    return h;
+}
 
 // ─── Construction / Destruction ───────────────────────────────────────────────
 
@@ -30,6 +44,13 @@ HdriBrowser::~HdriBrowser()
 {
     // GPU resources must have been freed by shutdown() already.
     stopWorkers();
+}
+
+void HdriBrowser::setCacheDir(const std::string& dir)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::u8path(dir), ec);
+    m_cacheDir = ec ? std::string{} : dir;  // disable silently on failure
 }
 
 // ─── Thread pool ─────────────────────────────────────────────────────────────
@@ -85,32 +106,120 @@ void HdriBrowser::workerLoop()
             m_workQueue.pop();
         }
 
-        // Load the full image on this worker thread.
-        // item.path is UTF-8; use u8path() so the dot-search in extension()
-        // isn't confused by non-ASCII bytes on Windows.
-        Texture tex;
-        std::string err;
-        std::string ext = std::filesystem::u8path(item.path).extension().string();
-        for (char& c : ext)
-        {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        const bool isHdr = (ext == ".hdr");
-        const bool ok    = isHdr ? tex.loadHDR(item.path, err)
-                                 : tex.loadEXR(item.path, err);
-
         ReadyItem ready;
         ready.idx = item.idx;
 
-        if (!ok || !tex.isHdr() || tex.width == 0 || tex.height == 0)
+        // ── Cache check BEFORE loading the source file ────────────────────────
+        // Only two cheap stat syscalls needed to validate a hit; the full HDR
+        // decode (potentially hundreds of MB) is skipped entirely on a cache hit.
+        //
+        // Cache file layout (binary):
+        //   uint32_t version  = THUMB_W<<16|THUMB_H  (invalidates on dim change)
+        //   int64_t  mtime    = last_write_time().time_since_epoch().count()
+        //   uint64_t filesize = source file size in bytes
+        //   uint8_t  pixels[THUMB_W * THUMB_H * 4]
+        bool cacheHit = false;
+        std::filesystem::path cachePath;
+        std::error_code statEc;
+        std::filesystem::file_time_type srcMtime;
+        uint64_t srcSize = 0;
+
+        if (!m_cacheDir.empty())
         {
-            ready.errorMsg = ok ? "Expected HDR (float) image" : err;
+            char name[24];
+            std::snprintf(name, sizeof(name), "%016llx.thumb",
+                          static_cast<unsigned long long>(fnv1a64(item.path)));
+            cachePath = std::filesystem::u8path(m_cacheDir) / name;
+
+            srcMtime = std::filesystem::last_write_time(
+                           std::filesystem::u8path(item.path), statEc);
+            if (!statEc)
+                srcSize = static_cast<uint64_t>(std::filesystem::file_size(
+                              std::filesystem::u8path(item.path), statEc));
+
+            if (!statEc)
+            {
+                std::ifstream ifs(cachePath, std::ios::binary);
+                if (ifs)
+                {
+                    constexpr uint32_t kVersion =
+                        (static_cast<uint32_t>(THUMB_W) << 16) | THUMB_H;
+                    uint32_t ver = 0;
+                    int64_t  mt  = 0;
+                    uint64_t sz  = 0;
+                    if (ifs.read(reinterpret_cast<char*>(&ver), 4) &&
+                        ifs.read(reinterpret_cast<char*>(&mt),  8) &&
+                        ifs.read(reinterpret_cast<char*>(&sz),  8) &&
+                        ver == kVersion &&
+                        mt  == static_cast<int64_t>(
+                                   srcMtime.time_since_epoch().count()) &&
+                        sz  == srcSize)
+                    {
+                        ready.pixels.resize(
+                            static_cast<size_t>(THUMB_W) * THUMB_H * 4u);
+                        if (ifs.read(reinterpret_cast<char*>(ready.pixels.data()),
+                                     ready.pixels.size()))
+                            cacheHit = true;
+                        else
+                            ready.pixels.clear();  // partial read — fall through
+                    }
+                }
+            }
         }
-        else
+
+        // ── Cache miss: load source file, generate, write cache ───────────────
+        if (!cacheHit)
         {
-            ready.pixels.resize(static_cast<size_t>(THUMB_W) * THUMB_H * 4u);
-            generateThumbnail(tex.floatPixels(), tex.width, tex.height,
-                              ready.pixels.data(), THUMB_W, THUMB_H);
+            // item.path is UTF-8; use u8path() so extension() isn't confused by
+            // non-ASCII bytes on Windows.
+            Texture tex;
+            std::string err;
+            std::string ext =
+                std::filesystem::u8path(item.path).extension().string();
+            for (char& c : ext)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            const bool isHdr = (ext == ".hdr");
+            const bool ok    = isHdr ? tex.loadHDR(item.path, err)
+                                     : tex.loadEXR(item.path, err);
+
+            if (!ok || !tex.isHdr() || tex.width == 0 || tex.height == 0)
+            {
+                ready.errorMsg = ok ? "Expected HDR (float) image" : err;
+            }
+            else
+            {
+                ready.pixels.resize(static_cast<size_t>(THUMB_W) * THUMB_H * 4u);
+                generateThumbnail(tex.floatPixels(), tex.width, tex.height,
+                                  ready.pixels.data(), THUMB_W, THUMB_H);
+
+                // ── Write to cache ────────────────────────────────────────────
+                // Reuse the mtime/size we already fetched; write via tmp+rename
+                // so a crash mid-write can't leave a corrupt cache file.
+                if (!m_cacheDir.empty() && !statEc)
+                {
+                    const auto tmpPath =
+                        cachePath.parent_path() /
+                        (cachePath.filename().string() + ".tmp");
+                    std::ofstream ofs(tmpPath, std::ios::binary);
+                    if (ofs)
+                    {
+                        constexpr uint32_t kVersion =
+                            (static_cast<uint32_t>(THUMB_W) << 16) | THUMB_H;
+                        const int64_t mt = static_cast<int64_t>(
+                                               srcMtime.time_since_epoch().count());
+                        ofs.write(reinterpret_cast<const char*>(&kVersion), 4);
+                        ofs.write(reinterpret_cast<const char*>(&mt),       8);
+                        ofs.write(reinterpret_cast<const char*>(&srcSize),  8);
+                        ofs.write(reinterpret_cast<const char*>(
+                                      ready.pixels.data()), ready.pixels.size());
+                        ofs.close();
+                        std::error_code ec;
+                        std::filesystem::rename(tmpPath, cachePath, ec);
+                        if (ec)
+                            std::filesystem::remove(tmpPath, ec);
+                    }
+                }
+            }
         }
 
         {

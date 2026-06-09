@@ -67,6 +67,10 @@ Application::Application(int width, int height, const std::string& title,
         m_ptxWriteTime = std::filesystem::last_write_time(std::filesystem::path(ptxDir) / "device_programs.ptx", ec);
     }
 
+    // Thumbnail cache lives alongside the executable so it survives across runs.
+    m_hdriBrowser.setCacheDir(
+        (std::filesystem::path(m_ptxDir) / "thumbnails").u8string());
+
     m_scene = std::make_unique<Scene>();
     buildSbt();  // empty SBT — no meshes yet
 

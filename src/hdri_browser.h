@@ -69,6 +69,11 @@ public:
     // Mark a path as the currently active environment map (shows ● highlight).
     void setActivePath(const std::string& path) { m_activePath = path; }
 
+    // Set the directory where generated thumbnails are cached on disk.
+    // Call once at startup (before the first setFolder).  An empty or
+    // unwritable path silently disables caching.
+    void setCacheDir(const std::string& dir);
+
     // Release all GPU textures and stop worker threads.
     // Must be called before ImGui_ImplVulkan_Shutdown().
     void shutdown(VulkanContext& vkCtx);
@@ -100,6 +105,7 @@ private:
     std::string             m_folder;
     std::string             m_activePath;
     std::string             m_pendingFolder;  // set by draw(); consumed by uploadPending()
+    std::string             m_cacheDir;       // UTF-8; empty = cache disabled
     std::vector<ThumbEntry> m_entries;        // accessed from main thread only
     int                     m_thumbSizeIdx = 0; // 0=Large, 1=Medium, 2=Small
 
