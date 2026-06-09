@@ -29,8 +29,9 @@ struct MaterialData
     int    roughnessTexture = -1;  // index into device texture array; red channel; -1 = no texture
     float  metallic         = 0.0f;
 
-    float3 emission      = { 0.0f, 0.0f, 0.0f };
-    float  emissionScale = 1.0f;
+    float3 emission         = { 0.0f, 0.0f, 0.0f };
+    float  emissionScale    = 1.0f;
+    int    emissionTexture  = -1;   // index into device texture array; -1 = no texture
 
     float  transmission       = 0.0f;  // 0 = opaque, 1 = fully transmissive
     float  ior                = 1.5f;  // index of refraction (glass ≈ 1.5)

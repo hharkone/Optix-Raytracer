@@ -382,6 +382,14 @@ static MaterialData buildMaterial(
             static_cast<float>(gltfMat.emissiveFactor[2]));
     }
 
+    if (gltfMat.emissiveTexture.index >= 0)
+    {
+        const int imageIdx =
+            model.textures[gltfMat.emissiveTexture.index].source;
+        if (imageIdx >= 0)
+            mat.emissionTexture = textureOffset + imageIdx;
+    }
+
     // KHR_materials_transmission — transmissionFactor ∈ [0, 1]
     auto transIt = gltfMat.extensions.find("KHR_materials_transmission");
     if (transIt != gltfMat.extensions.end() && transIt->second.Has("transmissionFactor"))

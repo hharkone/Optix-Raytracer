@@ -996,8 +996,24 @@ extern "C" __global__ void __closesthit__radiance()
         if (sampleSceneTex(mat.roughnessTexture, mesh.uvs, tri, w0, bc, mat.uvTransform, texSample))
             vtx->roughness *= texSample.x;
 
-        vtx->metallic      = mat.metallic;
-        vtx->emission      = mat.emission * mat.emissionScale;
+        vtx->metallic = mat.metallic;
+
+        // Emission — colour factor × texture (both sRGB-encoded, linearised before
+        // multiply, matching the albedo path).
+        {
+            float3 emLinear = srgbToLinear3(mat.emission);
+            float4 emSample;
+            if (sampleSceneTex(mat.emissionTexture, mesh.uvs, tri, w0, bc,
+                               mat.uvTransform, emSample))
+            {
+                const float3 emTexLinear = srgbToLinear3(
+                    make_float3(emSample.x, emSample.y, emSample.z));
+                emLinear = make_float3(emLinear.x * emTexLinear.x,
+                                      emLinear.y * emTexLinear.y,
+                                      emLinear.z * emTexLinear.z);
+            }
+            vtx->emission = emLinear * mat.emissionScale;
+        }
         vtx->transmission       = mat.transmission;
         vtx->ior                = mat.ior;
         vtx->absorptionDistance = fmaxf(mat.absorptionDistance, 1e-4f);

@@ -1676,8 +1676,35 @@ bool Application::tick()
                         }
                         if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.0f, 1.0f))
                             anyMatChanged = true;
-                        if (ImGui::ColorEdit3("Emission",  &mats[i].emission.x))
+                        if (ImGui::ColorEdit3("Emission", &mats[i].emission.x,
+                                ImGuiColorEditFlags_Float))
                             anyMatChanged = true;
+                        ImGui::SameLine();
+                        {
+                            const auto& textures = m_scene->textures();
+                            const int   cur      = mats[i].emissionTexture;
+                            const std::string preview = (cur < 0 || cur >= (int)textures.size())
+                                ? "None"
+                                : (textures[cur].name.empty()
+                                    ? "Texture " + std::to_string(cur)
+                                    : textures[cur].name);
+                            ImGui::PushItemWidth(-1.0f);
+                            if (ImGui::BeginCombo("##emissionTex", preview.c_str()))
+                            {
+                                if (ImGui::Selectable("None", cur < 0))
+                                { mats[i].emissionTexture = -1; anyMatChanged = true; }
+                                for (int t = 0; t < (int)textures.size(); ++t)
+                                {
+                                    const std::string label = textures[t].name.empty()
+                                        ? ("Texture " + std::to_string(t))
+                                        : textures[t].name;
+                                    if (ImGui::Selectable(label.c_str(), cur == t))
+                                    { mats[i].emissionTexture = t; anyMatChanged = true; }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::PopItemWidth();
+                        }
                         if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale, 0.1f, 0.0f, 1000.0f, "%.2f"))
                             anyMatChanged = true;
                         if (ImGui::SliderFloat("Transmission", &mats[i].transmission, 0.0f, 1.0f, "%.3f"))
@@ -1904,9 +1931,36 @@ bool Application::tick()
                     {
                         anyChanged = true;
                     }
-                    if (ImGui::ColorEdit3("Emission",  &mats[matIdx].emission.x))
+                    if (ImGui::ColorEdit3("Emission", &mats[matIdx].emission.x,
+                                          ImGuiColorEditFlags_Float))
                     {
                         anyChanged = true;
+                    }
+                    ImGui::SameLine();
+                    {
+                        const auto& textures = m_scene->textures();
+                        const int   cur      = mats[matIdx].emissionTexture;
+                        const std::string preview = (cur < 0 || cur >= (int)textures.size())
+                            ? "None"
+                            : (textures[cur].name.empty()
+                                ? "Texture " + std::to_string(cur)
+                                : textures[cur].name);
+                        ImGui::PushItemWidth(-1.0f);
+                        if (ImGui::BeginCombo("##emissionTexNode", preview.c_str()))
+                        {
+                            if (ImGui::Selectable("None", cur < 0))
+                            { mats[matIdx].emissionTexture = -1; anyChanged = true; }
+                            for (int t = 0; t < (int)textures.size(); ++t)
+                            {
+                                const std::string label = textures[t].name.empty()
+                                    ? ("Texture " + std::to_string(t))
+                                    : textures[t].name;
+                                if (ImGui::Selectable(label.c_str(), cur == t))
+                                { mats[matIdx].emissionTexture = t; anyChanged = true; }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        ImGui::PopItemWidth();
                     }
                     if (ImGui::DragFloat("Emission Scale", &mats[matIdx].emissionScale,
                                          0.1f, 0.0f, 1000.0f, "%.2f"))
