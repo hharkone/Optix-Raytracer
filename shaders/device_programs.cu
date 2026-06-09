@@ -27,6 +27,19 @@ static __forceinline__ __device__ float devClamp01(float x) { return x < 0.0f ? 
 static __forceinline__ __device__ float devDot(float3 a, float3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 static __forceinline__ __device__ float devLuminance(float3 c) { return 0.2126f*c.x + 0.7152f*c.y + 0.0722f*c.z; }
 
+// sRGB → linear: simple γ-2.2 approximation, matching the linear→sRGB encode path.
+static __forceinline__ __device__
+float srgbToLinear(float c)
+{
+    return powf(devClamp01(c), 2.2f);
+}
+
+static __forceinline__ __device__
+float3 srgbToLinear3(float3 c)
+{
+    return make_float3(srgbToLinear(c.x), srgbToLinear(c.y), srgbToLinear(c.z));
+}
+
 static __forceinline__ __device__
 float3 devNormalize(float3 v)
 {
@@ -889,13 +902,20 @@ extern "C" __global__ void __closesthit__radiance()
     if (optixLaunchParams.materials && mesh.materialIndex >= 0)
     {
         const MaterialData& mat = optixLaunchParams.materials[mesh.materialIndex];
-        // Albedo — base colour × texture tint (glTF: baseColorFactor × baseColorTexture)
-        vtx->albedo = mat.albedo;
+        // Albedo — base colour × texture tint (glTF: baseColorFactor × baseColorTexture).
+        // Both the colour factor and the texture sample are sRGB-encoded, so each is
+        // linearised independently before the multiplication.
+        vtx->albedo = srgbToLinear3(mat.albedo);
         float4 texSample;
         if (sampleSceneTex(mat.albedoTexture, mesh.uvs, tri, w0, bc, mat.uvTransform, texSample))
-            vtx->albedo = make_float3(vtx->albedo.x * texSample.x,
-                                      vtx->albedo.y * texSample.y,
-                                      vtx->albedo.z * texSample.z);
+        {
+            const float3 texLinear = srgbToLinear3(
+                make_float3(texSample.x, texSample.y, texSample.z));
+            vtx->albedo = make_float3(
+                vtx->albedo.x * texLinear.x,
+                vtx->albedo.y * texLinear.y,
+                vtx->albedo.z * texLinear.z);
+        }
 
         // Roughness — red channel × roughness factor
         vtx->roughness = mat.roughness;
