@@ -17,6 +17,7 @@ struct Camera
     float fStop         = 8.0f;    // f-number; lens radius = focalLength / (2 × fStop × 1000) m
     float focusDistance = 10.0f;   // world units to focal plane along optical axis
     float bokehEdgeBias = 0.0f;    // [0, 1]: 0 = uniform disk, 1 = pure rim ring
+    bool  dofEnabled    = true;    // false → pinhole camera (lensRadius forced to 0)
 
     // Derived / legacy fields — kept for backward compatibility and glTF import.
     float       yFov        = 0.872665f;  // radians — NOT the primary FOV source; derived from focalLength + sensorSize

@@ -1147,8 +1147,11 @@ bool Application::tick()
                             up.z * tanHalfFovV);
             m_launchParams.W = forward;
 
-            // Thin-lens DoF parameters
-            m_launchParams.lensRadius    = (cam.focalLength / (2.0f * cam.fStop)) / 1000.0f;
+            // Thin-lens DoF parameters.
+            // lensRadius = 0 → pinhole (no DoF); overridden to 0 when DoF is disabled.
+            m_launchParams.lensRadius    = cam.dofEnabled
+                ? (cam.focalLength / (2.0f * cam.fStop)) / 1000.0f
+                : 0.0f;
             m_launchParams.focusDistance = cam.focusDistance;
             m_launchParams.bokehEdgeBias = cam.bokehEdgeBias;
         }
@@ -1946,7 +1949,21 @@ bool Application::tick()
                         m_accumDirty = true;
                     }
 
-                    // F-stop / aperture
+                    // Depth of field toggle
+                    bool dof = cam.dofEnabled;
+                    if (ImGui::Checkbox("Depth of Field", &dof))
+                    {
+                        cam.dofEnabled = dof;
+                        m_scene->setCamera(cam);
+                        m_accumDirty = true;
+                    }
+
+                    // F-stop, focus distance, bokeh — all greyed out when DoF is disabled
+                    if (!cam.dofEnabled)
+                    {
+                        ImGui::BeginDisabled();
+                    }
+
                     float fs = cam.fStop;
                     if (ImGui::SliderFloat("F-Stop", &fs, 0.5f, 64.0f, "f/%.1f"))
                     {
@@ -1955,7 +1972,6 @@ bool Application::tick()
                         m_accumDirty = true;
                     }
 
-                    // Focus distance
                     float fd = cam.focusDistance;
                     if (ImGui::DragFloat("Focus Distance", &fd, 0.1f, 0.1f, 10000.0f, "%.2f m"))
                     {
@@ -1964,13 +1980,17 @@ bool Application::tick()
                         m_accumDirty = true;
                     }
 
-                    // Bokeh edge bias
                     float eb = cam.bokehEdgeBias;
                     if (ImGui::SliderFloat("Bokeh Edge Bias", &eb, 0.0f, 1.0f, "%.2f"))
                     {
                         cam.bokehEdgeBias = eb;
                         m_scene->setCamera(cam);
                         m_accumDirty = true;
+                    }
+
+                    if (!cam.dofEnabled)
+                    {
+                        ImGui::EndDisabled();
                     }
 
                     // Derived FOV display
