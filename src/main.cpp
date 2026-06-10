@@ -14,7 +14,10 @@ int main(int /*argc*/, char** argv)
             std::filesystem::path(argv[0]).parent_path().string();
 
         Application app(1920, 1080, "OptiX Raytracer", ptxDir);
-        while (app.tick()) {}
+        while (app.tick())
+        {
+            // All per-frame work happens inside tick().
+        }
     }
     catch (const std::exception& e)
     {

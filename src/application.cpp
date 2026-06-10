@@ -142,7 +142,7 @@ Application::~Application()
     if (m_denoiserScratch)   { cudaFree(reinterpret_cast<void*>(m_denoiserScratch));   m_denoiserScratch   = 0; }
     delete[] h_hdrBuffer;    h_hdrBuffer = nullptr;
 
-    if (m_pipeline)      { optixPipelineDestroy(m_pipeline);           m_pipeline      = nullptr; }
+    if (m_pipeline)     { optixPipelineDestroy(m_pipeline);           m_pipeline     = nullptr; }
     if (m_pgHitgroup)   { optixProgramGroupDestroy(m_pgHitgroup);    m_pgHitgroup    = nullptr; }
     if (m_pgMissShadow) { optixProgramGroupDestroy(m_pgMissShadow);  m_pgMissShadow  = nullptr; }
     if (m_pgMiss)       { optixProgramGroupDestroy(m_pgMiss);        m_pgMiss        = nullptr; }
@@ -316,14 +316,14 @@ struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) HitGroupRecord
 void Application::buildPipeline(const std::string& ptxDir)
 {
     // Load PTX source from the directory next to the executable
-    const std::string ptxPath =
-        (std::filesystem::path(ptxDir) / "device_programs.ptx").string();
+    const std::string ptxPath = (std::filesystem::path(ptxDir) / "device_programs.ptx").string();
 
     std::ifstream ptxFile(ptxPath, std::ios::binary | std::ios::ate);
     if (!ptxFile)
     {
         throw std::runtime_error("Cannot open PTX file: " + ptxPath);
     }
+
     const std::streamsize ptxSize = ptxFile.tellg();
     ptxFile.seekg(0, std::ios::beg);
     std::string ptxSource(static_cast<size_t>(ptxSize), '\0');
@@ -337,15 +337,13 @@ void Application::buildPipeline(const std::string& ptxDir)
 
     OptixPipelineCompileOptions pipelineOpts = {};
     pipelineOpts.usesMotionBlur                   = 0;
-    pipelineOpts.traversableGraphFlags            =
-        OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
+    pipelineOpts.traversableGraphFlags            = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     pipelineOpts.numPayloadValues                 = 4;  // radiance: p0/p1 = packed PathVertex ptr
-                                                        //  shadow: p0=vis, p1/p2/p3=RGB filter
+                                                        // shadow: p0=vis, p1/p2/p3=RGB filter
     pipelineOpts.numAttributeValues               = 2;  // barycentrics (built-in triangle)
     pipelineOpts.exceptionFlags                   = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineOpts.pipelineLaunchParamsVariableName = "optixLaunchParams";
-    pipelineOpts.usesPrimitiveTypeFlags           =
-        static_cast<unsigned int>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
+    pipelineOpts.usesPrimitiveTypeFlags           = static_cast<unsigned int>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
 
     OPTIX_CHECK(optixModuleCreate(
         m_optixContext,
@@ -359,40 +357,38 @@ void Application::buildPipeline(const std::string& ptxDir)
     OptixProgramGroupOptions pgOpts = {};
     OptixProgramGroupDesc    pgDesc = {};
 
-    pgDesc.kind                    = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    pgDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
     pgDesc.raygen.module            = m_module;
     pgDesc.raygen.entryFunctionName = "__raygen__renderFrame";
     OPTIX_CHECK(optixProgramGroupCreate(
         m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgRaygen));
 
-    pgDesc                         = {};
-    pgDesc.kind                    = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    pgDesc                          = {};
+    pgDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_MISS;
     pgDesc.miss.module              = m_module;
     pgDesc.miss.entryFunctionName   = "__miss__radiance";
     OPTIX_CHECK(optixProgramGroupCreate(
         m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgMiss));
 
-    pgDesc                         = {};
-    pgDesc.kind                    = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    pgDesc                          = {};
+    pgDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_MISS;
     pgDesc.miss.module              = m_module;
     pgDesc.miss.entryFunctionName   = "__miss__shadow";
     OPTIX_CHECK(optixProgramGroupCreate(
         m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgMissShadow));
 
-    pgDesc                                   = {};
-    pgDesc.kind                              = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-    pgDesc.hitgroup.moduleCH                  = m_module;
-    pgDesc.hitgroup.entryFunctionNameCH       = "__closesthit__radiance";
-    pgDesc.hitgroup.moduleAH                  = m_module;
-    pgDesc.hitgroup.entryFunctionNameAH       = "__anyhit__radiance";
-    pgDesc.hitgroup.moduleIS                  = nullptr;  // built-in triangle IS
-    pgDesc.hitgroup.entryFunctionNameIS       = nullptr;
-    OPTIX_CHECK(optixProgramGroupCreate(
-        m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgHitgroup));
+    pgDesc                              = {};
+    pgDesc.kind                         = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    pgDesc.hitgroup.moduleCH            = m_module;
+    pgDesc.hitgroup.entryFunctionNameCH = "__closesthit__radiance";
+    pgDesc.hitgroup.moduleAH            = m_module;
+    pgDesc.hitgroup.entryFunctionNameAH = "__anyhit__radiance";
+    pgDesc.hitgroup.moduleIS            = nullptr;  // built-in triangle IS
+    pgDesc.hitgroup.entryFunctionNameIS = nullptr;
+    OPTIX_CHECK(optixProgramGroupCreate(m_optixContext, &pgDesc, 1, &pgOpts, nullptr, nullptr, &m_pgHitgroup));
 
     // ── Pipeline ──────────────────────────────────────────────────────────────
-    const OptixProgramGroup pgs[] = {
-        m_pgRaygen, m_pgMiss, m_pgMissShadow, m_pgHitgroup };
+    const OptixProgramGroup pgs[] = {m_pgRaygen, m_pgMiss, m_pgMissShadow, m_pgHitgroup };
 
     OptixPipelineLinkOptions linkOpts = {};
     // Depth 1: path rays and NEE shadow rays are both called from raygen —
@@ -439,12 +435,12 @@ void Application::reloadPipeline()
     }
     catch (...)
     {
-        if (m_pipeline)      { optixPipelineDestroy(m_pipeline);          m_pipeline      = nullptr; }
-        if (m_pgHitgroup)    { optixProgramGroupDestroy(m_pgHitgroup);    m_pgHitgroup    = nullptr; }
-        if (m_pgMissShadow)  { optixProgramGroupDestroy(m_pgMissShadow);  m_pgMissShadow  = nullptr; }
-        if (m_pgMiss)        { optixProgramGroupDestroy(m_pgMiss);        m_pgMiss        = nullptr; }
-        if (m_pgRaygen)      { optixProgramGroupDestroy(m_pgRaygen);      m_pgRaygen      = nullptr; }
-        if (m_module)        { optixModuleDestroy(m_module);              m_module        = nullptr; }
+        if (m_pipeline)      { optixPipelineDestroy(m_pipeline);         m_pipeline     = nullptr; }
+        if (m_pgHitgroup)    { optixProgramGroupDestroy(m_pgHitgroup);   m_pgHitgroup   = nullptr; }
+        if (m_pgMissShadow)  { optixProgramGroupDestroy(m_pgMissShadow); m_pgMissShadow = nullptr; }
+        if (m_pgMiss)        { optixProgramGroupDestroy(m_pgMiss);       m_pgMiss       = nullptr; }
+        if (m_pgRaygen)      { optixProgramGroupDestroy(m_pgRaygen);     m_pgRaygen     = nullptr; }
+        if (m_module)        { optixModuleDestroy(m_module);             m_module       = nullptr; }
 
         m_module        = oldModule;
         m_pgRaygen      = oldPgRaygen;
@@ -517,18 +513,15 @@ void Application::buildSbt()
     // ── Raygen record ─────────────────────────────────────────────────────────
     RaygenRecord raygenRec = {};
     OPTIX_CHECK(optixSbtRecordPackHeader(m_pgRaygen, &raygenRec));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtRaygenBuffer),
-                           sizeof(RaygenRecord)));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtRaygenBuffer),
-                           &raygenRec, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtRaygenBuffer), sizeof(RaygenRecord)));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtRaygenBuffer), &raygenRec, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
 
     // ── Miss records — index 0 = radiance, index 1 = NEE shadow ─────────────
     MissRecord missRecs[2] = {};
     OPTIX_CHECK(optixSbtRecordPackHeader(m_pgMiss,       &missRecs[0]));
     OPTIX_CHECK(optixSbtRecordPackHeader(m_pgMissShadow, &missRecs[1]));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtMissBuffer), sizeof(missRecs)));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtMissBuffer),
-                           missRecs, sizeof(missRecs), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtMissBuffer), missRecs, sizeof(missRecs), cudaMemcpyHostToDevice));
 
     // ── Hit group records — one per mesh ──────────────────────────────────────
     const auto& meshes = m_scene->meshes();
@@ -553,8 +546,7 @@ void Application::buildSbt()
     {
         const size_t hitByteSize = hitRecs.size() * sizeof(HitGroupRecord);
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtHitgroupBuffer), hitByteSize));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtHitgroupBuffer),
-                               hitRecs.data(), hitByteSize, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtHitgroupBuffer), hitRecs.data(), hitByteSize, cudaMemcpyHostToDevice));
     }
 
     // ── Fill the SBT descriptor ───────────────────────────────────────────────
@@ -647,7 +639,9 @@ void Application::resizeFramebuffer(int w, int h)
 void Application::rebuildTlas()
 {
     if (!m_scene->hasAccel())
+    {
         return;
+    }
     try
     {
         m_scene->rebuildTlas(m_optixContext);
@@ -662,9 +656,13 @@ void Application::rebuildTlas()
 void Application::syncFlyCameraFromNode(int nodeIdx)
 {
     if (nodeIdx < 0 || nodeIdx >= static_cast<int>(m_scene->nodes().size()))
+    {
         return;
+    }
     if (std::string(m_scene->nodeAt(nodeIdx).typeName()) != "Camera")
+    {
         return;
+    }
 
     // Extract position, yaw, and pitch from the node's world-space transform.
     // This mirrors the one-time extraction in loadScene() so that editing a
@@ -840,8 +838,8 @@ void Application::updateCamera()
     // rmbFirstFrame is skipped to avoid a position-jump on the first drag frame.
     if (rmb && !rmbFirstFrame && m_viewportHovered)
     {
-        const bool shiftHeld = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)   == GLFW_PRESS
-                            || glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT)  == GLFW_PRESS;
+        const bool shiftHeld = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT)    == GLFW_PRESS
+                            || glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT)   == GLFW_PRESS;
         const bool ctrlHeld  = glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS
                             || glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
 
@@ -1071,8 +1069,7 @@ bool Application::tick()
 
     // ── Viewport panel ────────────────────────────────────────────────────────
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::Begin("Viewport", nullptr,
-        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
     // Record hover state for use in updateCamera() next frame
@@ -1099,25 +1096,23 @@ bool Application::tick()
             m_hasValidDenoisedFrame   = false;  // stale denoised frame is now invalid
         }
 
-        m_launchParams.colorBuffer    = d_colorBuffer;
-        m_launchParams.fbSize         = make_uint2(static_cast<unsigned int>(m_viewportWidth), static_cast<unsigned int>(m_viewportHeight));
-        m_launchParams.traversable    = m_scene->traversable();
+        m_launchParams.colorBuffer       = d_colorBuffer;
+        m_launchParams.fbSize            = make_uint2(static_cast<unsigned int>(m_viewportWidth), static_cast<unsigned int>(m_viewportHeight));
+        m_launchParams.traversable       = m_scene->traversable();
         m_launchParams.envMap            = m_envMap.gpuTex;
         m_launchParams.envMapRotation    = m_envMapRotation;
         m_launchParams.envExposure       = m_envExposure;
-        m_launchParams.envMarginalCdf    = m_envMap.cdfMarginal
-            ? reinterpret_cast<const float*>(m_envMap.cdfMarginal)    : nullptr;
-        m_launchParams.envConditionalCdf = m_envMap.cdfConditional
-            ? reinterpret_cast<const float*>(m_envMap.cdfConditional) : nullptr;
+        m_launchParams.envMarginalCdf    = m_envMap.cdfMarginal    ? reinterpret_cast<const float*>(m_envMap.cdfMarginal)    : nullptr;
+        m_launchParams.envConditionalCdf = m_envMap.cdfConditional ? reinterpret_cast<const float*>(m_envMap.cdfConditional) : nullptr;
         m_launchParams.envCdfW           = m_envMap.width;
         m_launchParams.envCdfH           = m_envMap.height;
-        m_launchParams.accumBuffer    = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
-        m_launchParams.sampleIndex    = m_sampleCount;
-        m_launchParams.materials      = m_materialsBuffer ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
-        m_launchParams.sceneTextures  = m_scene->textureObjects();
-        m_launchParams.normalBuffer   = m_normalBuffer ? reinterpret_cast<float4*>(m_normalBuffer) : nullptr;
-        m_launchParams.albedoBuffer   = m_albedoBuffer ? reinterpret_cast<float4*>(m_albedoBuffer) : nullptr;
-        m_launchParams.hdrBuffer      = m_hdrBuffer    ? reinterpret_cast<float4*>(m_hdrBuffer)    : nullptr;
+        m_launchParams.accumBuffer       = m_accumBuffer ? reinterpret_cast<float4*>(m_accumBuffer) : nullptr;
+        m_launchParams.sampleIndex       = m_sampleCount;
+        m_launchParams.materials         = m_materialsBuffer ? reinterpret_cast<const MaterialData*>(m_materialsBuffer) : nullptr;
+        m_launchParams.sceneTextures     = m_scene->textureObjects();
+        m_launchParams.normalBuffer      = m_normalBuffer ? reinterpret_cast<float4*>(m_normalBuffer) : nullptr;
+        m_launchParams.albedoBuffer      = m_albedoBuffer ? reinterpret_cast<float4*>(m_albedoBuffer) : nullptr;
+        m_launchParams.hdrBuffer         = m_hdrBuffer    ? reinterpret_cast<float4*>(m_hdrBuffer)    : nullptr;
 
         // Camera basis vectors derived from the scene camera each frame
         {
@@ -1125,19 +1120,15 @@ bool Application::tick()
             const Matrix4x4& t   = cam.transform;
 
             // Camera-to-world columns: right=col0, up=col1, +Z=col2, eye=col3
-            m_launchParams.eye =
-                make_float3(t.m[0][3], t.m[1][3], t.m[2][3]);
-            const float3 right   =
-                make_float3(t.m[0][0], t.m[1][0], t.m[2][0]);
-            const float3 up      =
-                make_float3(t.m[0][1], t.m[1][1], t.m[2][1]);
+            m_launchParams.eye   = make_float3(t.m[0][3], t.m[1][3], t.m[2][3]);
+            const float3 right   = make_float3(t.m[0][0], t.m[1][0], t.m[2][0]);
+            const float3 up      = make_float3(t.m[0][1], t.m[1][1], t.m[2][1]);
+
             // Camera looks down -Z, so forward = -column2
-            const float3 forward =
-                make_float3(-t.m[0][2], -t.m[1][2], -t.m[2][2]);
+            const float3 forward = make_float3(-t.m[0][2], -t.m[1][2], -t.m[2][2]);
 
             // FOV from physical lens + sensor parameters
-            const float aspect       = static_cast<float>(m_viewportWidth)
-                                      / static_cast<float>(m_viewportHeight);
+            const float aspect       = static_cast<float>(m_viewportWidth) / static_cast<float>(m_viewportHeight);
             const float sensorHeight = cam.sensorSize / aspect;  // mm
             const float tanHalfFovV  = sensorHeight / (2.0f * cam.focalLength);
             const float tanHalfFovH  = tanHalfFovV * aspect;
@@ -1609,14 +1600,18 @@ bool Application::tick()
                         ImGui::SameLine(ImGui::GetContentRegionMax().x - swatchSize);
                         if (ImGui::ColorEdit3("##albedo_swatch", &mats[i].albedo.x,
                                 ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float))
+                        {
                             anyMatChanged = true;
+                        }
                     }
 
                     if (matOpen)
                     {
                         // Albedo colour + texture selector on the same line
                         if (ImGui::ColorEdit3("Albedo", &mats[i].albedo.x, ImGuiColorEditFlags_Float))
+                        {
                             anyMatChanged = true;
+                        }
 
                         ImGui::SameLine();
                         {
@@ -1632,7 +1627,10 @@ bool Application::tick()
                             if (ImGui::BeginCombo("##albedoTex", preview.c_str()))
                             {
                                 if (ImGui::Selectable("None", cur < 0))
-                                { mats[i].albedoTexture = -1; anyMatChanged = true; }
+                                {
+                                    mats[i].albedoTexture = -1;
+                                    anyMatChanged = true;
+                                }
 
                                 for (int t = 0; t < (int)textures.size(); ++t)
                                 {
@@ -1640,14 +1638,19 @@ bool Application::tick()
                                         ? ("Texture " + std::to_string(t))
                                         : textures[t].name;
                                     if (ImGui::Selectable(label.c_str(), cur == t))
-                                    { mats[i].albedoTexture = t; anyMatChanged = true; }
+                                    {
+                                        mats[i].albedoTexture = t;
+                                        anyMatChanged = true;
+                                    }
                                 }
                                 ImGui::EndCombo();
                             }
                             ImGui::PopItemWidth();
                         }
                         if (ImGui::SliderFloat("Roughness", &mats[i].roughness, 0.0f, 1.0f))
+                        {
                             anyMatChanged = true;
+                        }
                         ImGui::SameLine();
                         {
                             const auto& textures = m_scene->textures();
@@ -1661,24 +1664,33 @@ bool Application::tick()
                             if (ImGui::BeginCombo("##roughnessTex", preview.c_str()))
                             {
                                 if (ImGui::Selectable("None", cur < 0))
-                                { mats[i].roughnessTexture = -1; anyMatChanged = true; }
+                                {
+                                    mats[i].roughnessTexture = -1;
+                                    anyMatChanged = true;
+                                }
                                 for (int t = 0; t < (int)textures.size(); ++t)
                                 {
                                     const std::string label = textures[t].name.empty()
                                         ? ("Texture " + std::to_string(t))
                                         : textures[t].name;
                                     if (ImGui::Selectable(label.c_str(), cur == t))
-                                    { mats[i].roughnessTexture = t; anyMatChanged = true; }
+                                    {
+                                        mats[i].roughnessTexture = t;
+                                        anyMatChanged = true;
+                                    }
                                 }
                                 ImGui::EndCombo();
                             }
                             ImGui::PopItemWidth();
                         }
                         if (ImGui::SliderFloat("Metallic",  &mats[i].metallic,  0.0f, 1.0f))
+                        {
                             anyMatChanged = true;
-                        if (ImGui::ColorEdit3("Emission", &mats[i].emission.x,
-                                ImGuiColorEditFlags_Float))
+                        }
+                        if (ImGui::ColorEdit3("Emission", &mats[i].emission.x, ImGuiColorEditFlags_Float))
+                        {
                             anyMatChanged = true;
+                        }
                         ImGui::SameLine();
                         {
                             const auto& textures = m_scene->textures();
@@ -1692,31 +1704,49 @@ bool Application::tick()
                             if (ImGui::BeginCombo("##emissionTex", preview.c_str()))
                             {
                                 if (ImGui::Selectable("None", cur < 0))
-                                { mats[i].emissionTexture = -1; anyMatChanged = true; }
+                                {
+                                    mats[i].emissionTexture = -1;
+                                    anyMatChanged = true;
+                                }
                                 for (int t = 0; t < (int)textures.size(); ++t)
                                 {
                                     const std::string label = textures[t].name.empty()
                                         ? ("Texture " + std::to_string(t))
                                         : textures[t].name;
                                     if (ImGui::Selectable(label.c_str(), cur == t))
-                                    { mats[i].emissionTexture = t; anyMatChanged = true; }
+                                    {
+                                        mats[i].emissionTexture = t;
+                                        anyMatChanged = true;
+                                    }
                                 }
                                 ImGui::EndCombo();
                             }
                             ImGui::PopItemWidth();
                         }
                         if (ImGui::DragFloat("Emission Scale", &mats[i].emissionScale, 0.1f, 0.0f, 1000.0f, "%.2f"))
+                        {
                             anyMatChanged = true;
+                        }
                         if (ImGui::SliderFloat("Transmission", &mats[i].transmission, 0.0f, 1.0f, "%.3f"))
+                        {
                             anyMatChanged = true;
+                        }
                         if (ImGui::SliderFloat("IOR",          &mats[i].ior,          1.0f, 3.0f, "%.3f"))
+                        {
                             anyMatChanged = true;
+                        }
                         if (ImGui::DragFloat("Absorption Dist.", &mats[i].absorptionDistance, 0.002f, 0.0001f, 1000.0f, "%.4f"))
+                        {
                             anyMatChanged = true;
+                        }
                         if (ImGui::SliderFloat("Clearcoat",      &mats[i].clearcoat,          0.0f, 1.0f, "%.3f"))
+                        {
                             anyMatChanged = true;
+                        }
                         if (ImGui::SliderFloat("Coat Roughness", &mats[i].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
+                        {
                             anyMatChanged = true;
+                        }
 
                         {
                             bool tw = mats[i].thinWalled != 0;
@@ -1736,9 +1766,13 @@ bool Application::tick()
                         ImGui::Separator();
                         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
                         if (ImGui::DragFloat2("Tiling",  &mats[i].uvTransform.x, 0.01f, 0.0f, 0.0f, "%.3f"))
+                        {
                             anyMatChanged = true;
+                        }
                         if (ImGui::DragFloat2("Offset",  &mats[i].uvTransform.z, 0.01f, 0.0f, 0.0f, "%.3f"))
+                        {
                             anyMatChanged = true;
+                        }
                         ImGui::PopItemWidth();
                     }
 
@@ -1847,21 +1881,31 @@ bool Application::tick()
         ImGui::Text("Operation:");
         ImGui::SameLine();
         if (ImGui::RadioButton("Translate", m_gizmoOp == ImGuizmo::TRANSLATE))
+        {
             m_gizmoOp = ImGuizmo::TRANSLATE;
+        }
         ImGui::SameLine();
         if (ImGui::RadioButton("Rotate", m_gizmoOp == ImGuizmo::ROTATE))
+        {
             m_gizmoOp = ImGuizmo::ROTATE;
+        }
         ImGui::SameLine();
         if (ImGui::RadioButton("Scale", m_gizmoOp == ImGuizmo::SCALE))
+        {
             m_gizmoOp = ImGuizmo::SCALE;
+        }
 
         ImGui::Text("Space:    ");
         ImGui::SameLine();
         if (ImGui::RadioButton("Local", m_gizmoMode == ImGuizmo::LOCAL))
+        {
             m_gizmoMode = ImGuizmo::LOCAL;
+        }
         ImGui::SameLine();
         if (ImGui::RadioButton("World", m_gizmoMode == ImGuizmo::WORLD))
+        {
             m_gizmoMode = ImGuizmo::WORLD;
+        }
 
         ImGui::Separator();
 
@@ -1912,98 +1956,10 @@ bool Application::tick()
                 }
 
                 const std::string& matName = m_scene->materialName(matIdx);
-                const std::string  header  = matName.empty()
-                    ? ("Material " + std::to_string(matIdx))
-                    : matName;
+                const std::string  header  = matName.empty() ? ("Material id:" + std::to_string(matIdx)) : ("Material: " + matName);
 
                 ImGui::PushID(meshIdx);
-                if (ImGui::CollapsingHeader(header.c_str()))
-                {
-                    if (ImGui::ColorEdit3("Albedo",   &mats[matIdx].albedo.x, ImGuiColorEditFlags_Float))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::SliderFloat("Roughness",    &mats[matIdx].roughness,     0.0f, 1.0f))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::SliderFloat("Metallic",     &mats[matIdx].metallic,      0.0f, 1.0f))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::ColorEdit3("Emission", &mats[matIdx].emission.x,
-                                          ImGuiColorEditFlags_Float))
-                    {
-                        anyChanged = true;
-                    }
-                    ImGui::SameLine();
-                    {
-                        const auto& textures = m_scene->textures();
-                        const int   cur      = mats[matIdx].emissionTexture;
-                        const std::string preview = (cur < 0 || cur >= (int)textures.size())
-                            ? "None"
-                            : (textures[cur].name.empty()
-                                ? "Texture " + std::to_string(cur)
-                                : textures[cur].name);
-                        ImGui::PushItemWidth(-1.0f);
-                        if (ImGui::BeginCombo("##emissionTexNode", preview.c_str()))
-                        {
-                            if (ImGui::Selectable("None", cur < 0))
-                            { mats[matIdx].emissionTexture = -1; anyChanged = true; }
-                            for (int t = 0; t < (int)textures.size(); ++t)
-                            {
-                                const std::string label = textures[t].name.empty()
-                                    ? ("Texture " + std::to_string(t))
-                                    : textures[t].name;
-                                if (ImGui::Selectable(label.c_str(), cur == t))
-                                { mats[matIdx].emissionTexture = t; anyChanged = true; }
-                            }
-                            ImGui::EndCombo();
-                        }
-                        ImGui::PopItemWidth();
-                    }
-                    if (ImGui::DragFloat("Emission Scale", &mats[matIdx].emissionScale,
-                                         0.1f, 0.0f, 1000.0f, "%.2f"))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::SliderFloat("Transmission", &mats[matIdx].transmission, 0.0f, 1.0f, "%.3f"))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::SliderFloat("IOR",          &mats[matIdx].ior,          1.0f, 3.0f, "%.3f"))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::DragFloat("Absorption Dist.", &mats[matIdx].absorptionDistance,
-                                         0.01f, 0.001f, 1000.0f, "%.3f"))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::SliderFloat("Clearcoat",      &mats[matIdx].clearcoat,          0.0f, 1.0f, "%.3f"))
-                    {
-                        anyChanged = true;
-                    }
-                    if (ImGui::SliderFloat("Coat Roughness", &mats[matIdx].clearcoatRoughness,  0.0f, 1.0f, "%.3f"))
-                    {
-                        anyChanged = true;
-                    }
-
-                    {
-                        bool tw = mats[matIdx].thinWalled != 0;
-                        if (ImGui::Checkbox("Thin Walled", &tw))
-                        {
-                            mats[matIdx].thinWalled = tw ? 1 : 0;
-                            anyChanged = true;
-                        }
-                        if (ImGui::IsItemHovered())
-                        {
-                            ImGui::SetTooltip(
-                                "Shadow rays pass through this surface.\n"
-                                "Use for window glass to speed up interior lighting convergence.");
-                        }
-                    }
-                }
+                ImGui::Text(header.c_str());
                 ImGui::PopID();
             }
 

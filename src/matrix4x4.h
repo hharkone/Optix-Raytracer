@@ -21,9 +21,15 @@ inline Matrix4x4 mat4Multiply(const Matrix4x4& a, const Matrix4x4& b)
 {
     Matrix4x4 r;
     for (int row = 0; row < 4; ++row)
+    {
         for (int col = 0; col < 4; ++col)
+        {
             for (int k = 0; k < 4; ++k)
+            {
                 r.m[row][col] += a.m[row][k] * b.m[k][col];
+            }
+        }
+    }
     return r;
 }
 
@@ -107,8 +113,12 @@ inline Matrix4x4 mat4RigidInverse(const Matrix4x4& m)
 {
     Matrix4x4 inv;
     for (int r = 0; r < 3; ++r)
+    {
         for (int c = 0; c < 3; ++c)
+        {
             inv.m[r][c] = m.m[c][r];  // transpose the 3×3 rotation block
+        }
+    }
 
     const float tx = m.m[0][3], ty = m.m[1][3], tz = m.m[2][3];
     inv.m[0][3] = -(inv.m[0][0]*tx + inv.m[0][1]*ty + inv.m[0][2]*tz);
@@ -123,8 +133,12 @@ inline Matrix4x4 mat4RigidInverse(const Matrix4x4& m)
 inline void mat4ToColMajor(const Matrix4x4& m, float out[16])
 {
     for (int r = 0; r < 4; ++r)
+    {
         for (int c = 0; c < 4; ++c)
+        {
             out[c * 4 + r] = m.m[r][c];
+        }
+    }
 }
 
 // Convert a column-major float[16] (from ImGuizmo) back to our row-major Matrix4x4.
@@ -132,8 +146,12 @@ inline Matrix4x4 mat4FromColMajor(const float in[16])
 {
     Matrix4x4 m;
     for (int r = 0; r < 4; ++r)
+    {
         for (int c = 0; c < 4; ++c)
+        {
             m.m[r][c] = in[c * 4 + r];
+        }
+    }
     return m;
 }
 

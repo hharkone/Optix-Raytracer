@@ -54,8 +54,7 @@ void VulkanContext::init(GLFWwindow* window, int width, int height)
     // 3. Debug messenger
     VkDebugUtilsMessengerCreateInfoEXT dbgCI = {};
     dbgCI.sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    dbgCI.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-                          | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    dbgCI.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     dbgCI.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
                           | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
                           | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
@@ -98,7 +97,9 @@ void VulkanContext::init(GLFWwindow* window, int width, int height)
             VkBool32 presentOk = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, m_surface, &presentOk);
             if ((qfProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && presentOk)
+            {
                 return static_cast<int>(i);
+            }
         }
         return -1;
     };
@@ -109,9 +110,16 @@ void VulkanContext::init(GLFWwindow* window, int width, int height)
         VkPhysicalDeviceProperties props{};
         vkGetPhysicalDeviceProperties(pd, &props);
         if (props.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        {
             continue;
+        }
         int qf = pickQueueFamily(pd);
-        if (qf >= 0) { m_physDevice = pd; m_queueFamily = static_cast<uint32_t>(qf); break; }
+        if (qf >= 0)
+        {
+            m_physDevice = pd;
+            m_queueFamily = static_cast<uint32_t>(qf);
+            break;
+        }
     }
     // Second pass: any suitable device (integrated, virtual, etc.)
     if (m_physDevice == VK_NULL_HANDLE)
@@ -119,11 +127,18 @@ void VulkanContext::init(GLFWwindow* window, int width, int height)
         for (auto& pd : devs)
         {
             int qf = pickQueueFamily(pd);
-            if (qf >= 0) { m_physDevice = pd; m_queueFamily = static_cast<uint32_t>(qf); break; }
+            if (qf >= 0)
+            {
+                m_physDevice = pd;
+                m_queueFamily = static_cast<uint32_t>(qf);
+                break;
+            }
         }
     }
     if (m_physDevice == VK_NULL_HANDLE)
+    {
         throw std::runtime_error("No suitable Vulkan physical device found");
+    }
 
     // 6. Logical device + queue
     const float qPriority = 1.0f;
@@ -182,12 +197,12 @@ void VulkanContext::cleanup()
 
     destroyDisplayImage();
 
-    if (m_imguiDescPool != VK_NULL_HANDLE) { vkDestroyDescriptorPool(m_device, m_imguiDescPool, nullptr); m_imguiDescPool = VK_NULL_HANDLE; }
+    if (m_imguiDescPool != VK_NULL_HANDLE) { vkDestroyDescriptorPool(m_device, m_imguiDescPool,  nullptr); m_imguiDescPool = VK_NULL_HANDLE; }
     if (m_fence         != VK_NULL_HANDLE) { vkDestroyFence(m_device,          m_fence,          nullptr); m_fence         = VK_NULL_HANDLE; }
-    if (m_renderDone    != VK_NULL_HANDLE) { vkDestroySemaphore(m_device,       m_renderDone,     nullptr); m_renderDone    = VK_NULL_HANDLE; }
-    if (m_imageReady    != VK_NULL_HANDLE) { vkDestroySemaphore(m_device,       m_imageReady,     nullptr); m_imageReady    = VK_NULL_HANDLE; }
-    if (m_cmdPool       != VK_NULL_HANDLE) { vkDestroyCommandPool(m_device,     m_cmdPool,        nullptr); m_cmdPool       = VK_NULL_HANDLE; }
-    if (m_renderPass    != VK_NULL_HANDLE) { vkDestroyRenderPass(m_device,      m_renderPass,     nullptr); m_renderPass    = VK_NULL_HANDLE; }
+    if (m_renderDone    != VK_NULL_HANDLE) { vkDestroySemaphore(m_device,      m_renderDone,     nullptr); m_renderDone    = VK_NULL_HANDLE; }
+    if (m_imageReady    != VK_NULL_HANDLE) { vkDestroySemaphore(m_device,      m_imageReady,     nullptr); m_imageReady    = VK_NULL_HANDLE; }
+    if (m_cmdPool       != VK_NULL_HANDLE) { vkDestroyCommandPool(m_device,    m_cmdPool,        nullptr); m_cmdPool       = VK_NULL_HANDLE; }
+    if (m_renderPass    != VK_NULL_HANDLE) { vkDestroyRenderPass(m_device,     m_renderPass,     nullptr); m_renderPass    = VK_NULL_HANDLE; }
 
     destroySwapchain();
 
@@ -604,14 +619,12 @@ void VulkanContext::createDisplayImage(int w, int h)
     bufAlloc.allocationSize  = bufReqs.size;
     bufAlloc.memoryTypeIndex = findMemoryType(bufReqs.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    vkAllocateMemory(m_device, &bufAlloc, nullptr, &m_displayStagingMem);
-    vkBindBufferMemory(m_device, m_displayStaging, m_displayStagingMem, 0);
-    vkMapMemory(m_device, m_displayStagingMem, 0, pixelBytes, 0, &m_displayStagingPtr);
+        vkAllocateMemory(m_device, &bufAlloc, nullptr, &m_displayStagingMem);
+        vkBindBufferMemory(m_device, m_displayStaging, m_displayStagingMem, 0);
+        vkMapMemory(m_device, m_displayStagingMem, 0, pixelBytes, 0, &m_displayStagingPtr);
 
     // Register with ImGui → VkDescriptorSet used as ImTextureID
-    m_displayDescSet = ImGui_ImplVulkan_AddTexture(
-        m_displaySampler, m_displayImageView,
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    m_displayDescSet = ImGui_ImplVulkan_AddTexture(m_displaySampler, m_displayImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void VulkanContext::destroyDisplayImage()
@@ -620,14 +633,14 @@ void VulkanContext::destroyDisplayImage()
     {
         return;
     }
-    if (m_displayDescSet    != VK_NULL_HANDLE) { ImGui_ImplVulkan_RemoveTexture(m_displayDescSet); m_displayDescSet    = VK_NULL_HANDLE; }
-    if (m_displayStagingPtr)                   { vkUnmapMemory(m_device, m_displayStagingMem);     m_displayStagingPtr = nullptr; }
-    if (m_displayStaging    != VK_NULL_HANDLE) { vkDestroyBuffer(m_device,   m_displayStaging,    nullptr); m_displayStaging    = VK_NULL_HANDLE; }
-    if (m_displayStagingMem != VK_NULL_HANDLE) { vkFreeMemory(m_device,      m_displayStagingMem, nullptr); m_displayStagingMem = VK_NULL_HANDLE; }
-    if (m_displaySampler    != VK_NULL_HANDLE) { vkDestroySampler(m_device,  m_displaySampler,    nullptr); m_displaySampler    = VK_NULL_HANDLE; }
-    if (m_displayImageView  != VK_NULL_HANDLE) { vkDestroyImageView(m_device,m_displayImageView,  nullptr); m_displayImageView  = VK_NULL_HANDLE; }
-    if (m_displayImage      != VK_NULL_HANDLE) { vkDestroyImage(m_device,    m_displayImage,      nullptr); m_displayImage      = VK_NULL_HANDLE; }
-    if (m_displayImageMem   != VK_NULL_HANDLE) { vkFreeMemory(m_device,      m_displayImageMem,   nullptr); m_displayImageMem   = VK_NULL_HANDLE; }
+    if (m_displayDescSet    != VK_NULL_HANDLE) { ImGui_ImplVulkan_RemoveTexture(m_displayDescSet);  m_displayDescSet             = VK_NULL_HANDLE; }
+    if (m_displayStagingPtr)                   { vkUnmapMemory(m_device,      m_displayStagingMem); m_displayStagingPtr          = nullptr;        }
+    if (m_displayStaging    != VK_NULL_HANDLE) { vkDestroyBuffer(m_device,    m_displayStaging,    nullptr); m_displayStaging    = VK_NULL_HANDLE; }
+    if (m_displayStagingMem != VK_NULL_HANDLE) { vkFreeMemory(m_device,       m_displayStagingMem, nullptr); m_displayStagingMem = VK_NULL_HANDLE; }
+    if (m_displaySampler    != VK_NULL_HANDLE) { vkDestroySampler(m_device,   m_displaySampler,    nullptr); m_displaySampler    = VK_NULL_HANDLE; }
+    if (m_displayImageView  != VK_NULL_HANDLE) { vkDestroyImageView(m_device, m_displayImageView,  nullptr); m_displayImageView  = VK_NULL_HANDLE; }
+    if (m_displayImage      != VK_NULL_HANDLE) { vkDestroyImage(m_device,     m_displayImage,      nullptr); m_displayImage      = VK_NULL_HANDLE; }
+    if (m_displayImageMem   != VK_NULL_HANDLE) { vkFreeMemory(m_device,       m_displayImageMem,   nullptr); m_displayImageMem   = VK_NULL_HANDLE; }
 }
 
 // ─── Per-frame rendering ──────────────────────────────────────────────────────
@@ -919,7 +932,7 @@ ImGuiTexture VulkanContext::createImGuiTexture(int w, int h, const uint8_t* rgba
 void VulkanContext::destroyImGuiTexture(ImGuiTexture& tex)
 {
     if (m_device == VK_NULL_HANDLE) { return; }
-    if (tex.descSet != VK_NULL_HANDLE) { ImGui_ImplVulkan_RemoveTexture(tex.descSet); tex.descSet = VK_NULL_HANDLE; }
+    if (tex.descSet != VK_NULL_HANDLE) { ImGui_ImplVulkan_RemoveTexture(tex.descSet);        tex.descSet = VK_NULL_HANDLE; }
     if (tex.sampler != VK_NULL_HANDLE) { vkDestroySampler(m_device,   tex.sampler, nullptr); tex.sampler = VK_NULL_HANDLE; }
     if (tex.view    != VK_NULL_HANDLE) { vkDestroyImageView(m_device, tex.view,    nullptr); tex.view    = VK_NULL_HANDLE; }
     if (tex.image   != VK_NULL_HANDLE) { vkDestroyImage(m_device,     tex.image,   nullptr); tex.image   = VK_NULL_HANDLE; }

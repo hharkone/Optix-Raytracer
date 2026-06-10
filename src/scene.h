@@ -15,7 +15,7 @@
 class Scene
 {
 public:
-    Scene()  = default;
+    Scene();             // starts with a default camera node in the graph
     ~Scene() = default;
 
     Scene(const Scene&)            = delete;
@@ -39,6 +39,9 @@ public:
     void          setCamera(Camera camera);
 
     // Scene graph — glTF node hierarchy preserved at load time.
+    // Adding a CameraNode (e.g. from the glTF importer) replaces the default
+    // camera node created at construction/clear() and syncs m_camera to it,
+    // so the graph always holds exactly one camera.
     int     addNode(std::unique_ptr<Node3D> node);  // takes ownership; returns index
     void    addRootNode(int index);
     Node3D& nodeAt(int index);                       // mutable access for child-link wiring
@@ -89,11 +92,19 @@ public:
     bool empty() const;  // true when there are no meshes
 
 private:
+    // Add the "Default Camera" root node at the current m_camera transform.
+    // Called from the constructor and clear().
+    void addDefaultCameraNode();
+
     std::vector<Mesh>         m_meshes;
     std::vector<MaterialData> m_materials;
     std::vector<std::string>  m_materialNames;  // parallel to m_materials
     std::vector<Texture>      m_textures;
     Camera                    m_camera = Camera::makeDefault();
+
+    // Index of the default camera node in m_nodes; -1 once an imported
+    // camera node has replaced it (see addNode()).
+    int m_defaultCameraNodeIdx = -1;
 
     std::vector<std::unique_ptr<Node3D>> m_nodes;
     std::vector<int>                     m_rootNodes;

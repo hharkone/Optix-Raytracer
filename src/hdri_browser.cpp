@@ -29,7 +29,9 @@ static uint64_t fnv1a64(const std::string& s)
 {
     uint64_t h = 14695981039346656037ULL;
     for (unsigned char c : s)
+    {
         h = (h ^ static_cast<uint64_t>(c)) * 1099511628211ULL;
+    }
     return h;
 }
 
@@ -134,8 +136,10 @@ void HdriBrowser::workerLoop()
             srcMtime = std::filesystem::last_write_time(
                            std::filesystem::u8path(item.path), statEc);
             if (!statEc)
+            {
                 srcSize = static_cast<uint64_t>(std::filesystem::file_size(
                               std::filesystem::u8path(item.path), statEc));
+            }
 
             if (!statEc)
             {
@@ -159,9 +163,13 @@ void HdriBrowser::workerLoop()
                             static_cast<size_t>(THUMB_W) * THUMB_H * 4u);
                         if (ifs.read(reinterpret_cast<char*>(ready.pixels.data()),
                                      ready.pixels.size()))
+                        {
                             cacheHit = true;
+                        }
                         else
+                        {
                             ready.pixels.clear();  // partial read — fall through
+                        }
                     }
                 }
             }
@@ -177,7 +185,9 @@ void HdriBrowser::workerLoop()
             std::string ext =
                 std::filesystem::u8path(item.path).extension().string();
             for (char& c : ext)
+            {
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
             const bool isHdr = (ext == ".hdr");
             const bool ok    = isHdr ? tex.loadHDR(item.path, err)
                                      : tex.loadEXR(item.path, err);
@@ -216,7 +226,9 @@ void HdriBrowser::workerLoop()
                         std::error_code ec;
                         std::filesystem::rename(tmpPath, cachePath, ec);
                         if (ec)
+                        {
                             std::filesystem::remove(tmpPath, ec);
+                        }
                     }
                 }
             }
@@ -390,7 +402,9 @@ void HdriBrowser::setFolder(VulkanContext& vkCtx, const std::string& folderPath)
             const bool aRoot = a.relPath.parent_path().empty();
             const bool bRoot = b.relPath.parent_path().empty();
             if (aRoot != bRoot)
+            {
                 return aRoot;               // root before subdir
+            }
             return a.relPath < b.relPath;   // alphabetical within each group
         });
 

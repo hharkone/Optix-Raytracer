@@ -840,8 +840,7 @@ extern "C" __global__ void __raygen__renderFrame()
     const float  inv = 1.0f / (float)(optixLaunchParams.sampleIndex + 1);
     if (optixLaunchParams.hdrBuffer)
     {
-        optixLaunchParams.hdrBuffer[fbIdx] =
-            make_float4(acc.x * inv, acc.y * inv, acc.z * inv, 1.0f);
+        optixLaunchParams.hdrBuffer[fbIdx] = make_float4(acc.x * inv, acc.y * inv, acc.z * inv, 1.0f);
     }
 
     // ── Tone-map and gamma-encode ─────────────────────────────────────────────
@@ -903,14 +902,10 @@ extern "C" __global__ void __anyhit__radiance()
         && optixLaunchParams.materials[mesh.materialIndex].thinWalled)
     {
         // Accumulate this surface's linearised albedo into the colour filter.
-        const float3 alb = srgbToLinear3(
-            optixLaunchParams.materials[mesh.materialIndex].albedo);
-        optixSetPayload_1(__float_as_uint(
-            __uint_as_float(optixGetPayload_1()) * alb.x));
-        optixSetPayload_2(__float_as_uint(
-            __uint_as_float(optixGetPayload_2()) * alb.y));
-        optixSetPayload_3(__float_as_uint(
-            __uint_as_float(optixGetPayload_3()) * alb.z));
+        const float3 alb = srgbToLinear3(optixLaunchParams.materials[mesh.materialIndex].albedo);
+        optixSetPayload_1(__float_as_uint(__uint_as_float(optixGetPayload_1()) * alb.x));
+        optixSetPayload_2(__float_as_uint(__uint_as_float(optixGetPayload_2()) * alb.y));
+        optixSetPayload_3(__float_as_uint(__uint_as_float(optixGetPayload_3()) * alb.z));
         optixIgnoreIntersection();          // keep traversal going past the glass
     }
     else
@@ -933,7 +928,9 @@ bool sampleSceneTex(int index, const float2* uvs, const uint3& tri,
                     float w0, float2 bc, float4 uvTransform, float4& out)
 {
     if (index < 0 || !optixLaunchParams.sceneTextures || !uvs)
+    {
         return false;
+    }
 
     // Interpolate raw mesh UV, then apply tiling and offset.
     const float2 uvRaw = make_float2(
@@ -983,8 +980,7 @@ extern "C" __global__ void __closesthit__radiance()
         float4 texSample;
         if (sampleSceneTex(mat.albedoTexture, mesh.uvs, tri, w0, bc, mat.uvTransform, texSample))
         {
-            const float3 texLinear = srgbToLinear3(
-                make_float3(texSample.x, texSample.y, texSample.z));
+            const float3 texLinear = srgbToLinear3(make_float3(texSample.x, texSample.y, texSample.z));
             vtx->albedo = make_float3(
                 vtx->albedo.x * texLinear.x,
                 vtx->albedo.y * texLinear.y,
@@ -994,7 +990,9 @@ extern "C" __global__ void __closesthit__radiance()
         // Roughness — red channel × roughness factor
         vtx->roughness = mat.roughness;
         if (sampleSceneTex(mat.roughnessTexture, mesh.uvs, tri, w0, bc, mat.uvTransform, texSample))
+        {
             vtx->roughness *= texSample.x;
+        }
 
         vtx->metallic = mat.metallic;
 

@@ -387,31 +387,50 @@ static MaterialData buildMaterial(
         const int imageIdx =
             model.textures[gltfMat.emissiveTexture.index].source;
         if (imageIdx >= 0)
+        {
             mat.emissionTexture = textureOffset + imageIdx;
+        }
+    }
+
+    // KHR_materials_emissive_strength — scalar multiplier on emissiveFactor
+    // (core glTF clamps emissiveFactor to [0,1]; this carries HDR intensity)
+    auto emsIt = gltfMat.extensions.find("KHR_materials_emissive_strength");
+    if (emsIt != gltfMat.extensions.end() && emsIt->second.Has("emissiveStrength"))
+    {
+        mat.emissionScale = static_cast<float>(
+            emsIt->second.Get("emissiveStrength").GetNumberAsDouble());
     }
 
     // KHR_materials_transmission — transmissionFactor ∈ [0, 1]
     auto transIt = gltfMat.extensions.find("KHR_materials_transmission");
     if (transIt != gltfMat.extensions.end() && transIt->second.Has("transmissionFactor"))
+    {
         mat.transmission = static_cast<float>(
             transIt->second.Get("transmissionFactor").GetNumberAsDouble());
+    }
 
     // KHR_materials_ior — index of refraction (default 1.5 per spec)
     auto iorIt = gltfMat.extensions.find("KHR_materials_ior");
     if (iorIt != gltfMat.extensions.end() && iorIt->second.Has("ior"))
+    {
         mat.ior = static_cast<float>(
             iorIt->second.Get("ior").GetNumberAsDouble());
+    }
 
     // KHR_materials_clearcoat
     auto ccIt = gltfMat.extensions.find("KHR_materials_clearcoat");
     if (ccIt != gltfMat.extensions.end())
     {
         if (ccIt->second.Has("clearcoatFactor"))
+        {
             mat.clearcoat = static_cast<float>(
                 ccIt->second.Get("clearcoatFactor").GetNumberAsDouble());
+        }
         if (ccIt->second.Has("clearcoatRoughnessFactor"))
+        {
             mat.clearcoatRoughness = static_cast<float>(
                 ccIt->second.Get("clearcoatRoughnessFactor").GetNumberAsDouble());
+        }
     }
 
     return mat;

@@ -64,9 +64,17 @@ public:
         , m_file(_wfopen(utf8ToWide(utf8Path).c_str(), L"rb"))
     {
         if (!m_file)
+        {
             throw std::runtime_error("Cannot open file: " + utf8Path);
+        }
     }
-    ~WideFileStream() override { if (m_file) fclose(m_file); }
+    ~WideFileStream() override
+    {
+        if (m_file)
+        {
+            fclose(m_file);
+        }
+    }
 
     // Returns true while the stream is not at EOF, false on the last chunk.
     // Throws on a short read (genuine error or unexpected EOF mid-stream).
@@ -117,11 +125,17 @@ static void sanitizeHdrPixels(std::vector<uint8_t>& pixels)
     for (size_t i = 0; i < count; ++i)
     {
         if (std::isnan(p[i]))
+        {
             p[i] = 0.0f;          // truly invalid — no meaningful value
+        }
         else if (p[i] > kMaxHalf) // +inf or any overflow beyond EXR's ceiling
+        {
             p[i] = kMaxHalf;
+        }
         else if (p[i] < 0.0f)    // negative radiance is non-physical
+        {
             p[i] = 0.0f;
+        }
     }
 }
 
@@ -349,7 +363,9 @@ bool Texture::loadImage(const std::string& path, std::string& outError)
 void Texture::buildCdf()
 {
     if (!isHdr() || pixels.empty())
+    {
         return;
+    }
 
     const int    W   = width;
     const int    H   = height;
@@ -395,7 +411,9 @@ void Texture::buildCdf()
     std::vector<float> marginalCdf(H);
     float totalWeight = 0.f;
     for (int j = 0; j < H; ++j)
+    {
         totalWeight += rowSums[j];
+    }
 
     {
         float running = 0.f;
