@@ -12,7 +12,12 @@
 
 struct LaunchParams
 {
-    uchar4*                colorBuffer;  // device pointer — RGBA8 output
+    // Display output — linear float4 for the scRGB FP16 swapchain.
+    // hdrDisplay selects the encode written by the raygen:
+    //   0 = Reinhard tone-map so the output stays within the SDR range.
+    //   1 = pass radiance through unclamped (HDR highlights exceed 1.0).
+    float4* colorBuffer;  // device pointer — linear scRGB output
+    int     hdrDisplay;   // 1 = unclamped HDR, 0 = SDR look (Reinhard)
     uint2                  fbSize;       // { width, height } in pixels
     OptixTraversableHandle traversable;  // top-level IAS; 0 = no scene loaded
 

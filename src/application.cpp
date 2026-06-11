@@ -81,11 +81,7 @@ Application::Application(int width, int height, const std::string& title,
 
 Application::~Application()
 {
-    if (d_colorBuffer)
-    {
-        cudaFree(d_colorBuffer);
-        d_colorBuffer = nullptr;
-    }
+    if (d_colorBuffer) { cudaFree(d_colorBuffer); d_colorBuffer = nullptr; }
     delete[] h_colorBuffer;
 
     if (m_launchParamsBuffer)
@@ -232,7 +228,14 @@ void Application::initImGui()
     style.ItemSpacing = ImVec2(8.0f, 4.0f);
     style.IndentSpacing = 16.0f;
     style.TreeLinesFlags = ImGuiTreeNodeFlags_DrawLinesFull;
-    
+
+    // On an scRGB swapchain the UI pipeline bakes the paper-white scale in as a
+    // specialization constant.  The scale is only meaningful when Windows HDR is
+    // actually active on the display; when HDR is off DWM maps scRGB 1.0 →
+    // display-white, so applying the paper-white multiplier would inflate mid-
+    // tones (e.g., sRGB 0.5 → 68% brightness instead of the correct 21.7%).
+    m_vkCtx.setUiScale(m_vkCtx.isDisplayHdrOn() ? (m_paperWhiteNits / 80.0f) : 1.0f);
+
     m_vkCtx.initImGui(m_window, m_vkCtx.swapchainImageCount());
 }
 void Application::initCuda()
@@ -565,11 +568,7 @@ void Application::buildSbt()
 
 void Application::resizeFramebuffer(int w, int h)
 {
-    if (d_colorBuffer)
-    {
-        cudaFree(d_colorBuffer);
-        d_colorBuffer = nullptr;
-    }
+    if (d_colorBuffer) { cudaFree(d_colorBuffer); d_colorBuffer = nullptr; }
     delete[] h_colorBuffer;
     h_colorBuffer = nullptr;
 
@@ -581,8 +580,8 @@ void Application::resizeFramebuffer(int w, int h)
 
     const size_t pixelCount = static_cast<size_t>(w) * h;
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_colorBuffer), pixelCount * sizeof(uchar4)));
-    h_colorBuffer = new uchar4[pixelCount];
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_colorBuffer), pixelCount * sizeof(float4)));
+    h_colorBuffer = new float4[pixelCount];
 
     // Accumulation buffer: float4 per pixel (w component unused)
     if (m_accumBuffer)
@@ -1096,7 +1095,8 @@ bool Application::tick()
             m_hasValidDenoisedFrame   = false;  // stale denoised frame is now invalid
         }
 
-        m_launchParams.colorBuffer       = d_colorBuffer;
+        m_launchParams.colorBuffer = d_colorBuffer;
+        m_launchParams.hdrDisplay  = m_hdrOutput ? 1 : 0;
         m_launchParams.fbSize            = make_uint2(static_cast<unsigned int>(m_viewportWidth), static_cast<unsigned int>(m_viewportHeight));
         m_launchParams.traversable       = m_scene->traversable();
         m_launchParams.envMap            = m_envMap.gpuTex;
@@ -1226,19 +1226,19 @@ bool Application::tick()
                 pixelCount * sizeof(float4),
                 cudaMemcpyDeviceToHost));
 
+            // Mirror the raygen encode: pass-through for HDR, Reinhard for SDR look.
             for (size_t i = 0; i < pixelCount; ++i)
             {
-                float r = h_hdrBuffer[i].x / (h_hdrBuffer[i].x + 1.0f);
-                float g = h_hdrBuffer[i].y / (h_hdrBuffer[i].y + 1.0f);
-                float b = h_hdrBuffer[i].z / (h_hdrBuffer[i].z + 1.0f);
-                r = powf(std::max(0.0f, r), 1.0f / 2.2f);
-                g = powf(std::max(0.0f, g), 1.0f / 2.2f);
-                b = powf(std::max(0.0f, b), 1.0f / 2.2f);
-                h_colorBuffer[i] = make_uchar4(
-                    static_cast<unsigned char>(r * 255.0f),
-                    static_cast<unsigned char>(g * 255.0f),
-                    static_cast<unsigned char>(b * 255.0f),
-                    255u);
+                float r = h_hdrBuffer[i].x;
+                float g = h_hdrBuffer[i].y;
+                float b = h_hdrBuffer[i].z;
+                if (!m_hdrOutput)
+                {
+                    r = r / (r + 1.0f);
+                    g = g / (g + 1.0f);
+                    b = b / (b + 1.0f);
+                }
+                h_colorBuffer[i] = make_float4(r, g, b, 1.0f);
             }
             m_hasValidDenoisedFrame = true;
         }
@@ -1248,20 +1248,21 @@ bool Application::tick()
             //  • denoiser is off, OR
             //  • denoiser is on but hasn't fired yet since the last accum reset
             //    (e.g. camera just moved) — keeps the viewport responsive.
+            const size_t pixelCount = static_cast<size_t>(m_viewportWidth) * m_viewportHeight;
             CUDA_CHECK(cudaMemcpy(
                 h_colorBuffer, d_colorBuffer,
-                static_cast<size_t>(m_viewportWidth) * m_viewportHeight * sizeof(uchar4),
+                pixelCount * sizeof(float4),
                 cudaMemcpyDeviceToHost));
         }
         // else: denoiser enabled, valid denoised frame exists, but interval not reached —
-        //        h_colorBuffer already holds the last denoised result; leave it untouched.
+        //        the host colour buffer already holds the last denoised result; leave it untouched.
 
         // Copy rendered pixels into the persistently-mapped staging buffer.
         // The GPU reads from this in the transfer pass recorded later this frame.
         if (m_vkCtx.displayStagingPtr() && h_colorBuffer)
         {
-            std::memcpy(m_vkCtx.displayStagingPtr(), h_colorBuffer,
-                static_cast<size_t>(m_viewportWidth) * m_viewportHeight * sizeof(uchar4));
+            const size_t pixelCount = static_cast<size_t>(m_viewportWidth) * m_viewportHeight;
+            std::memcpy(m_vkCtx.displayStagingPtr(), h_colorBuffer, pixelCount * sizeof(float4));
         }
 
         const ImVec2 imageScreenPos = ImGui::GetCursorScreenPos();
@@ -1544,6 +1545,65 @@ bool Application::tick()
     if (m_denoiserEnabled)
     {
         ImGui::DragInt("Denoise every N samples", &m_denoiserInterval, 1, 1, 10000);
+    }
+
+    // ── HDR output (scRGB swapchain) ──────────────────────────────────────────
+    ImGui::Separator();
+    {
+        if (ImGui::Checkbox("HDR Output", &m_hdrOutput))
+        {
+            // The display encode changed — a cached denoised frame is stale;
+            // the live raygen output picks up the new encode next launch.
+            m_hasValidDenoisedFrame = false;
+        }
+
+        // DXGI hint, polled ~once a second.  When Windows HDR is off the scRGB
+        // output still displays, but scRGB 1.0 = display-white (not 80 nits),
+        // so the paper-white multiplier must not be applied — doing so would
+        // inflate mid-tones and make the colour picker look too bright.
+        // Detect state changes here and update the UI pipeline scale accordingly.
+        static bool windowsHdrOn     = false;
+        static bool prevWindowsHdrOn = false;
+        static int  hdrPollFrames    = 0;
+        if (hdrPollFrames-- <= 0)
+        {
+            hdrPollFrames = 60;
+            windowsHdrOn  = m_vkCtx.isDisplayHdrOn();
+            if (windowsHdrOn != prevWindowsHdrOn)
+            {
+                prevWindowsHdrOn = windowsHdrOn;
+                m_vkCtx.setUiScale(windowsHdrOn ? (m_paperWhiteNits / 80.0f) : 1.0f);
+            }
+        }
+        if (m_hdrOutput && !windowsHdrOn)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
+                "Windows HDR is off - highlights will clip");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Enable HDR for this display in Windows Settings > System > Display.");
+            }
+        }
+
+        // Paper-white only applies (and the pipeline scale update only matters)
+        // when Windows HDR is actually on; grey the slider out otherwise so it
+        // is clear that the setting is held in reserve for when HDR is enabled.
+        if (!windowsHdrOn)
+        {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::SliderFloat("Paper White (nits)", &m_paperWhiteNits, 80.0f, 480.0f, "%.0f"))
+        {
+            // Rebuilds the UI pipeline (specialization constant).  Safe here:
+            // this frame's draw data is recorded after the panel code, and
+            // setUiScale waits for in-flight frames before destroying.
+            m_vkCtx.setUiScale(m_paperWhiteNits / 80.0f);
+        }
+        if (!windowsHdrOn)
+        {
+            ImGui::EndDisabled();
+        }
     }
 
     ImGui::Separator();
@@ -2082,7 +2142,10 @@ bool Application::tick()
     m_vkCtx.uploadDisplayImage(frame.cmd, h_colorBuffer,
                                m_viewportWidth, m_viewportHeight);
     m_vkCtx.beginRenderPass(frame.cmd);
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.cmd);
+    // On an scRGB swapchain uiPipeline() overrides the stock ImGui pipeline
+    // with one that converts UI colours sRGB → linear × paper white;
+    // VK_NULL_HANDLE (BGRA8 fallback) selects the stock pipeline.
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.cmd, m_vkCtx.uiPipeline());
     m_vkCtx.endFrameAndPresent(frame, 0, 0);
 
     return true;

@@ -16,7 +16,8 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 - **Environment lighting** — equirectangular EXR maps (`.exr`, all codecs: NONE / RLE / ZIP / PIZ / PXR24 / B44 / DWAA / DWAB) or Radiance HDR maps (`.hdr`) or procedural sky gradient, with rotation and exposure (EV) controls; NaN and inf pixels are clamped at load time (NaN → 0, inf → 65504) so over-bright sources never corrupt thumbnails or the CDF
 - **HDRI importance sampling** — 2D luminance CDF built at load time; NEE fires shadow rays toward bright env-map regions at every diffuse and specular (GGX) bounce; MIS power heuristic with the GGX VNDF PDF prevents double-counting on specular escape paths
 - **Thin-lens depth of field** — focal length, sensor size, f-stop, focus distance, and adjustable bokeh edge bias
-- **Reinhard tone mapping** with sRGB gamma encoding
+- **scRGB FP16 swapchain** (`VK_FORMAT_R16G16B16A16_SFLOAT`) for the display output — the framebuffer always contains linear HDR radiance; requires `VK_EXT_swapchain_colorspace` (available on all modern drivers)
+- **HDR output toggle** — when off, Reinhard tone-maps the accumulated radiance into the SDR range; when on, radiance is passed through unclamped so highlights exceed paper white on an HDR display
 - **OptiX AI denoiser** — normal + albedo guide layers, configurable denoise interval, keeps the last denoised frame while accumulating
 
 ### Scene
@@ -34,7 +35,7 @@ A physically based GPU path tracer built on NVIDIA OptiX 9.x, CUDA, Vulkan, C++1
 | Panel | Contents |
 |---|---|
 | **Viewport** | Live rendered image, resizes dynamically |
-| **Raytracer** | GPU stats, sample count, denoiser toggle, environment controls |
+| **Raytracer** | GPU stats, sample count, denoiser toggle, environment controls, HDR output toggle, paper-white slider (active when Windows HDR is on) |
 | **Resources** | Collapsible sub-categories: **Materials** (per-material PBR editor with albedo swatch preview) and **Textures** (loaded scene textures with dimensions and format) |
 | **Scene Graph** | Hierarchy tree of all scene nodes (click to select) |
 | **Node Properties** | Gizmo operation / space selector, TRS sliders, raw transform matrix, material editor, camera parameters for the selected node |
@@ -189,8 +190,11 @@ Optix-Raytracer/
 │   ├── device_math.h               float3 operator overloads (+ − * / for device and host)
 │   ├── launch_params.h             GPU parameter struct shared between host and device
 │   ├── scene_data.h                MeshData and MaterialData (no STL; host + device)
-│   └── device_programs.cu          OptiX device programs — iterative path tracer,
-│                                   HDRI importance sampling, NEE shadow rays, MIS
+│   ├── device_programs.cu          OptiX device programs — iterative path tracer,
+│   │                               HDRI importance sampling, NEE shadow rays, MIS
+│   ├── ui_scrgb.vert / .frag       Custom ImGui GLSL shaders: sRGB→linear + paper-white scale
+│   ├── ui_scrgb_spv.h              SPIR-V bytecode (generated — do not edit by hand)
+│   └── regen_ui_spv.ps1            PowerShell script to recompile the UI shaders via glslc
 └── src/
     ├── main.cpp                    Entry point
     ├── application.h/.cpp          CUDA/OptiX init, ImGui UI, per-frame render loop
@@ -246,6 +250,9 @@ Install Vulkan headers and the ICD loader: `sudo pacman -S vulkan-icd-loader vul
 
 **`Vulkan SDK not found` during configure (Windows)**  
 Install the [Vulkan SDK](https://vulkan.lunarg.com/) and ensure the `VULKAN_SDK` environment variable is set (the installer does this automatically). Re-run `configure.bat` after installation.
+
+**`scRGB FP16 surface format not available`** on startup  
+The Vulkan driver does not expose `VK_FORMAT_R16G16B16A16_SFLOAT` + `VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT`. Update your GPU driver to the latest version; this format has been available on all NVIDIA drivers for several years.
 
 **Black Viewport on startup**  
 The Vulkan validation layer may be printing errors to stderr. Run from a terminal to see them. Common causes: outdated driver (update to ≥ 570.x) or missing Vulkan instance extensions from GLFW.

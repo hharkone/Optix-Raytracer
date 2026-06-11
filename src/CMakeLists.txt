@@ -34,6 +34,9 @@ target_link_libraries(OptixRaytracer PRIVATE
     tinygltf
     nfd
     OpenEXR::OpenEXR
+    # DXGI — used to detect whether Windows HDR is enabled for the display
+    # (Vulkan surface formats can't distinguish HDR-on from HDR-off).
+    $<$<PLATFORM_ID:Windows>:dxgi>
 )
 
 # Copy PTX shaders next to the executable whenever they are rebuilt.

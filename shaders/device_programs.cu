@@ -369,6 +369,23 @@ float evalEnvMapPdf(float3 dir)
         : 0.0f;
 }
 
+// ─── Display write-out ────────────────────────────────────────────────────────
+// Writes a linear-radiance colour to the scRGB float4 display buffer.
+// hdrDisplay=1: radiance passes through unclamped (HDR highlights).
+// hdrDisplay=0: Reinhard tone-maps to the SDR range [0, 1).
+static __forceinline__ __device__
+void writeDisplay(unsigned int fbIdx, float3 linear)
+{
+    float3 c = linear;
+    if (!optixLaunchParams.hdrDisplay)
+    {
+        c.x = c.x / (c.x + 1.0f);
+        c.y = c.y / (c.y + 1.0f);
+        c.z = c.z / (c.z + 1.0f);
+    }
+    optixLaunchParams.colorBuffer[fbIdx] = make_float4(c.x, c.y, c.z, 1.0f);
+}
+
 // ─── Raygen — iterative path loop ────────────────────────────────────────────
 
 extern "C" __global__ void __raygen__renderFrame()
@@ -388,21 +405,19 @@ extern "C" __global__ void __raygen__renderFrame()
                 optixLaunchParams.U * nx +
                 optixLaunchParams.V * ny +
                 optixLaunchParams.W);
-            float3 c = sampleBackground(dir);
-            c.x = powf(devClamp01(c.x / (c.x + 1.0f)), 1.0f / 2.2f);
-            c.y = powf(devClamp01(c.y / (c.y + 1.0f)), 1.0f / 2.2f);
-            c.z = powf(devClamp01(c.z / (c.z + 1.0f)), 1.0f / 2.2f);
-            optixLaunchParams.colorBuffer[fbIdx] = make_uchar4(
-                (unsigned char)(c.x * 255.0f),
-                (unsigned char)(c.y * 255.0f),
-                (unsigned char)(c.z * 255.0f), 255u);
+            writeDisplay(fbIdx, sampleBackground(dir));
         }
         else
         {
-            optixLaunchParams.colorBuffer[fbIdx] = make_uchar4(
-                (unsigned char)(255u * idx.x / dim.x),
-                (unsigned char)(255u * idx.y / dim.y),
-                128u, 255u);
+            // UV debug gradient — linearise for the scRGB buffer; the UI
+            // pipeline applies the paper-white scale when rendering the image.
+            const float u = (float)idx.x / (float)dim.x;
+            const float v = (float)idx.y / (float)dim.y;
+            optixLaunchParams.colorBuffer[fbIdx] = make_float4(
+                powf(u,    2.2f),
+                powf(v,    2.2f),
+                powf(0.5f, 2.2f),
+                1.0f);
         }
         return;
     }
@@ -843,24 +858,9 @@ extern "C" __global__ void __raygen__renderFrame()
         optixLaunchParams.hdrBuffer[fbIdx] = make_float4(acc.x * inv, acc.y * inv, acc.z * inv, 1.0f);
     }
 
-    // ── Tone-map and gamma-encode ─────────────────────────────────────────────
-    float3 avg = make_float3(acc.x * inv, acc.y * inv, acc.z * inv);
-
-    // Reinhard: [0, ∞) → [0, 1)
-    avg.x = avg.x / (avg.x + 1.0f);
-    avg.y = avg.y / (avg.y + 1.0f);
-    avg.z = avg.z / (avg.z + 1.0f);
-
-    // Linear → sRGB (γ ≈ 1/2.2)
-    avg.x = powf(devClamp01(avg.x), 1.0f / 2.2f);
-    avg.y = powf(devClamp01(avg.y), 1.0f / 2.2f);
-    avg.z = powf(devClamp01(avg.z), 1.0f / 2.2f);
-
-    optixLaunchParams.colorBuffer[fbIdx] = make_uchar4(
-        (unsigned char)(avg.x * 255.0f),
-        (unsigned char)(avg.y * 255.0f),
-        (unsigned char)(avg.z * 255.0f),
-        255u);
+    // ── Display encode ────────────────────────────────────────────────────────
+    // Reinhard (hdrDisplay=0) or unclamped (hdrDisplay=1) → linear float4 scRGB.
+    writeDisplay(fbIdx, make_float3(acc.x * inv, acc.y * inv, acc.z * inv));
 }
 
 // ─── Miss ─────────────────────────────────────────────────────────────────────

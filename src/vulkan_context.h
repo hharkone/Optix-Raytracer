@@ -52,6 +52,27 @@ public:
     void destroySwapchain();
     void recreateSwapchain(int w, int h);
 
+    // ── scRGB presentation ────────────────────────────────────────────────────
+    // The swapchain always uses R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR
+    // (requires VK_EXT_swapchain_colorspace, available on all modern drivers).
+    // ImGui is rendered through a custom pipeline (uiPipeline) whose fragment
+    // shader linearises sRGB-authored UI colours and scales them to paper white,
+    // keeping the colour picker identical to a standard sRGB display.
+
+    // True when Windows reports HDR enabled for the monitor showing the
+    // window (DXGI query).  Purely a UI hint: with HDR off, scRGB values
+    // above 1.0 are clamped by the compositor (highlights clip).
+    bool isDisplayHdrOn() const;
+
+    // Pipeline to pass to ImGui_ImplVulkan_RenderDrawData — converts sRGB
+    // vertex colours to linear and scales to paper white.
+    VkPipeline uiPipeline() const { return m_uiPipeline; }
+
+    // Paper-white scale (paperWhiteNits / 80) for the scRGB UI pipeline and
+    // the render-pass clear colour.  Recreates the UI pipeline (the scale is
+    // baked in as a specialization constant) — call between frames.
+    void setUiScale(float scale);
+
     // ── Display image (CUDA → Vulkan pixel upload) ────────────────────────────
     void createDisplayImage(int w, int h);
     void destroyDisplayImage();
@@ -106,6 +127,10 @@ private:
     VkCommandBuffer beginOneShot();
     void            endOneShot(VkCommandBuffer cmd);
 
+    // Create/destroy the scRGB UI pipeline (see uiPipeline()).
+    void createUiPipeline();
+    void destroyUiPipeline(bool keepLayouts);
+
     GLFWwindow*              m_window         = nullptr;  // stored for resize-on-error
 
     // ── Core ──────────────────────────────────────────────────────────────────
@@ -125,8 +150,23 @@ private:
     VkExtent2D                m_scExtent     = {};
 
     // ── Render pass + framebuffers ────────────────────────────────────────────
-    VkRenderPass              m_renderPass   = VK_NULL_HANDLE;
+    VkRenderPass              m_renderPass       = VK_NULL_HANDLE;
+    VkFormat                  m_renderPassFormat = VK_FORMAT_UNDEFINED;
     std::vector<VkFramebuffer> m_framebuffers;
+
+    // ── scRGB presentation state ──────────────────────────────────────────────
+    bool  m_hasColorspaceExt = false;  // VK_EXT_swapchain_colorspace enabled on the instance
+    float m_uiScale          = 1.0f;   // paperWhiteNits / 80 — UI pipeline + clear colour
+
+    // Custom ImGui pipeline for scRGB swapchains.  Layout-compatible clone of
+    // the backend's pipeline (same set layouts + push constants) with a
+    // fragment shader that converts vertex colours sRGB → linear × m_uiScale.
+    VkDescriptorSetLayout m_uiSetLayoutTexture = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_uiSetLayoutSampler = VK_NULL_HANDLE;
+    VkPipelineLayout      m_uiPipelineLayout   = VK_NULL_HANDLE;
+    VkShaderModule        m_uiVertModule       = VK_NULL_HANDLE;
+    VkShaderModule        m_uiFragModule       = VK_NULL_HANDLE;
+    VkPipeline            m_uiPipeline         = VK_NULL_HANDLE;
 
     // ── Commands + sync ───────────────────────────────────────────────────────
     VkCommandPool             m_cmdPool      = VK_NULL_HANDLE;

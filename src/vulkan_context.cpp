@@ -2,16 +2,83 @@
 // Extracted from Application.cpp so that Application focuses on OptiX/CUDA/UI logic.
 
 #include "vulkan_context.h"
+#include "ui_scrgb_spv.h"  // SPIR-V for the scRGB ImGui pipeline (generated)
 
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+// DXGI is needed to detect whether Windows HDR is enabled for the display the
+// window is on.  Vulkan can't answer this: drivers list the FP16/scRGB surface
+// format even on SDR displays (DWM silently clamps the output), so the format
+// list alone always looks "HDR-capable".
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <dxgi1_6.h>
+#endif
+
+// True when the OS reports HDR enabled for the monitor showing the window.
+// On Windows this checks the DXGI output colour space (ST2084/HDR10 = HDR on).
+static bool isDisplayHdrEnabled(GLFWwindow* window)
+{
+#ifdef _WIN32
+    const HWND hwnd = glfwGetWin32Window(window);
+    if (!hwnd)
+    {
+        return false;
+    }
+    const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
+                                  reinterpret_cast<void**>(&factory))))
+    {
+        return false;
+    }
+
+    bool hdr = false;
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT a = 0;
+         !hdr && factory->EnumAdapters1(a, &adapter) != DXGI_ERROR_NOT_FOUND;
+         ++a)
+    {
+        IDXGIOutput* output = nullptr;
+        for (UINT o = 0;
+             !hdr && adapter->EnumOutputs(o, &output) != DXGI_ERROR_NOT_FOUND;
+             ++o)
+        {
+            IDXGIOutput6* output6 = nullptr;
+            if (SUCCEEDED(output->QueryInterface(__uuidof(IDXGIOutput6),
+                                                 reinterpret_cast<void**>(&output6))))
+            {
+                DXGI_OUTPUT_DESC1 desc = {};
+                if (SUCCEEDED(output6->GetDesc1(&desc))
+                    && desc.Monitor == monitor
+                    && desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
+                {
+                    hdr = true;
+                }
+                output6->Release();
+            }
+            output->Release();
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    return hdr;
+#else
+    (void)window;
+    return false;
+#endif
+}
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -23,6 +90,25 @@ void VulkanContext::init(GLFWwindow* window, int width, int height)
     uint32_t glfwExtCount = 0;
     const char** glfwExts = glfwGetRequiredInstanceExtensions(&glfwExtCount);
     std::vector<const char*> extensions(glfwExts, glfwExts + glfwExtCount);
+
+    // VK_EXT_swapchain_colorspace extends vkGetPhysicalDeviceSurfaceFormatsKHR
+    // with HDR colour spaces (e.g. EXTENDED_SRGB_LINEAR for scRGB output).
+    // Optional — HDR output is simply unavailable without it.
+    {
+        uint32_t extCount = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr);
+        std::vector<VkExtensionProperties> avail(extCount);
+        vkEnumerateInstanceExtensionProperties(nullptr, &extCount, avail.data());
+        for (const auto& e : avail)
+        {
+            if (std::strcmp(e.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0)
+            {
+                extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+                m_hasColorspaceExt = true;
+                break;
+            }
+        }
+    }
 
     std::vector<const char*> layers;
 #ifdef _DEBUG
@@ -196,6 +282,7 @@ void VulkanContext::cleanup()
     vkDeviceWaitIdle(m_device);
 
     destroyDisplayImage();
+    destroyUiPipeline(false);
 
     if (m_imguiDescPool != VK_NULL_HANDLE) { vkDestroyDescriptorPool(m_device, m_imguiDescPool,  nullptr); m_imguiDescPool = VK_NULL_HANDLE; }
     if (m_fence         != VK_NULL_HANDLE) { vkDestroyFence(m_device,          m_fence,          nullptr); m_fence         = VK_NULL_HANDLE; }
@@ -248,21 +335,29 @@ void VulkanContext::createSwapchain(int w, int h)
     VkSurfaceCapabilitiesKHR caps = {};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physDevice, m_surface, &caps);
 
-    // Format — prefer BGRA8 SRGB_NONLINEAR
+    // Format — always use scRGB FP16 (R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR).
+    // VK_EXT_swapchain_colorspace is present on all modern drivers; the format
+    // pair is listed regardless of the Windows HDR display setting.
     uint32_t fmtCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_physDevice, m_surface, &fmtCount, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(fmtCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_physDevice, m_surface, &fmtCount, fmts.data());
 
-    VkSurfaceFormatKHR chosen = fmts[0];
+    VkSurfaceFormatKHR chosen = {};
     for (auto& f : fmts)
     {
-        if (f.format == VK_FORMAT_B8G8R8A8_UNORM
-         && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        if (f.format == VK_FORMAT_R16G16B16A16_SFLOAT
+         && f.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT)
         {
             chosen = f;
             break;
         }
+    }
+    if (chosen.format == VK_FORMAT_UNDEFINED)
+    {
+        throw std::runtime_error(
+            "scRGB FP16 surface format not available — "
+            "update your GPU driver or enable VK_EXT_swapchain_colorspace");
     }
     m_scFormat = chosen.format;
 
@@ -355,9 +450,18 @@ void VulkanContext::createSwapchain(int w, int h)
         vkCreateImageView(m_device, &viewCI, nullptr, &m_scImageViews[i]);
     }
 
-    // Render pass (created once; format fixed)
+    // Render pass — recreated only when the attachment format changes (HDR
+    // toggle).  Plain resizes keep the same format so ImGui's pipeline, which
+    // references this render pass, stays valid across resizes.
+    if (m_renderPass != VK_NULL_HANDLE && m_renderPassFormat != m_scFormat)
+    {
+        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+        m_renderPass = VK_NULL_HANDLE;
+    }
     if (m_renderPass == VK_NULL_HANDLE)
     {
+        m_renderPassFormat = m_scFormat;
+
         VkAttachmentDescription colorAtt = {};
         colorAtt.format         = m_scFormat;
         colorAtt.samples        = VK_SAMPLE_COUNT_1_BIT;
@@ -470,6 +574,12 @@ void VulkanContext::createSwapchain(int w, int h)
         descPoolCI.pPoolSizes    = &poolSize;
         vkCreateDescriptorPool(m_device, &descPoolCI, nullptr, &m_imguiDescPool);
     }
+
+    // scRGB UI pipeline (created once — render pass format never changes)
+    if (m_uiPipeline == VK_NULL_HANDLE)
+    {
+        createUiPipeline();
+    }
 }
 
 void VulkanContext::destroySwapchain()
@@ -510,6 +620,215 @@ void VulkanContext::recreateSwapchain(int w, int h)
     createSwapchain(w, h);
 }
 
+// ─── scRGB presentation ───────────────────────────────────────────────────────
+
+bool VulkanContext::isDisplayHdrOn() const
+{
+    return isDisplayHdrEnabled(m_window);
+}
+
+void VulkanContext::setUiScale(float scale)
+{
+    if (scale == m_uiScale)
+    {
+        return;
+    }
+    m_uiScale = scale;
+
+    // The scale is a specialization constant — rebuild the UI pipeline.
+    if (m_device != VK_NULL_HANDLE && m_renderPass != VK_NULL_HANDLE)
+    {
+        vkDeviceWaitIdle(m_device);
+        destroyUiPipeline(true);  // pipeline only; layouts and modules are reused
+        createUiPipeline();
+    }
+}
+
+// Layout-compatible clone of the ImGui Vulkan backend pipeline: identical
+// descriptor set layouts (set 0 = sampled image, set 1 = sampler), push
+// constant range, vertex input, and blend state — so the backend's per-draw
+// descriptor binds (recorded with ITS pipeline layout) stay valid while OUR
+// pipeline is bound via the RenderDrawData pipeline override.  Only the
+// fragment shader differs: vertex colours are converted sRGB → linear and
+// scaled to paper white (see shaders/ui_scrgb.frag).
+void VulkanContext::createUiPipeline()
+{
+    // Descriptor set layouts + pipeline layout (created once)
+    if (m_uiSetLayoutTexture == VK_NULL_HANDLE)
+    {
+        VkDescriptorSetLayoutBinding binding = {};
+        binding.descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        binding.descriptorCount = 1;
+        binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo slCI = {};
+        slCI.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        slCI.bindingCount = 1;
+        slCI.pBindings    = &binding;
+        vkCreateDescriptorSetLayout(m_device, &slCI, nullptr, &m_uiSetLayoutTexture);
+
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        vkCreateDescriptorSetLayout(m_device, &slCI, nullptr, &m_uiSetLayoutSampler);
+
+        VkPushConstantRange pcRange = {};
+        pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pcRange.offset     = 0;
+        pcRange.size       = sizeof(float) * 4;  // vec2 uScale + vec2 uTranslate
+
+        const VkDescriptorSetLayout setLayouts[2] =
+            { m_uiSetLayoutTexture, m_uiSetLayoutSampler };
+
+        VkPipelineLayoutCreateInfo plCI = {};
+        plCI.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        plCI.setLayoutCount         = 2;
+        plCI.pSetLayouts            = setLayouts;
+        plCI.pushConstantRangeCount = 1;
+        plCI.pPushConstantRanges    = &pcRange;
+        vkCreatePipelineLayout(m_device, &plCI, nullptr, &m_uiPipelineLayout);
+    }
+
+    // Shader modules (created once)
+    if (m_uiVertModule == VK_NULL_HANDLE)
+    {
+        VkShaderModuleCreateInfo smCI = {};
+        smCI.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        smCI.codeSize = sizeof(kUiScrgbVertSpv);
+        smCI.pCode    = kUiScrgbVertSpv;
+        vkCreateShaderModule(m_device, &smCI, nullptr, &m_uiVertModule);
+
+        smCI.codeSize = sizeof(kUiScrgbFragSpv);
+        smCI.pCode    = kUiScrgbFragSpv;
+        vkCreateShaderModule(m_device, &smCI, nullptr, &m_uiFragModule);
+    }
+
+    // uUiScale (constant_id 0) — baked into the pipeline; setUiScale() rebuilds.
+    VkSpecializationMapEntry specEntry = { 0, 0, sizeof(float) };
+    VkSpecializationInfo specInfo = {};
+    specInfo.mapEntryCount = 1;
+    specInfo.pMapEntries   = &specEntry;
+    specInfo.dataSize      = sizeof(float);
+    specInfo.pData         = &m_uiScale;
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = m_uiVertModule;
+    stages[0].pName  = "main";
+    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = m_uiFragModule;
+    stages[1].pName  = "main";
+    stages[1].pSpecializationInfo = &specInfo;
+
+    // Vertex input — ImDrawVert layout (pos2f, uv2f, col RGBA8)
+    VkVertexInputBindingDescription bindingDesc = {};
+    bindingDesc.stride    = sizeof(ImDrawVert);
+    bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attrs[3] = {};
+    attrs[0].location = 0;
+    attrs[0].format   = VK_FORMAT_R32G32_SFLOAT;
+    attrs[0].offset   = offsetof(ImDrawVert, pos);
+    attrs[1].location = 1;
+    attrs[1].format   = VK_FORMAT_R32G32_SFLOAT;
+    attrs[1].offset   = offsetof(ImDrawVert, uv);
+    attrs[2].location = 2;
+    attrs[2].format   = VK_FORMAT_R8G8B8A8_UNORM;
+    attrs[2].offset   = offsetof(ImDrawVert, col);
+
+    VkPipelineVertexInputStateCreateInfo viCI = {};
+    viCI.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    viCI.vertexBindingDescriptionCount   = 1;
+    viCI.pVertexBindingDescriptions      = &bindingDesc;
+    viCI.vertexAttributeDescriptionCount = 3;
+    viCI.pVertexAttributeDescriptions    = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo iaCI = {};
+    iaCI.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    iaCI.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vpCI = {};
+    vpCI.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vpCI.viewportCount = 1;
+    vpCI.scissorCount  = 1;
+
+    VkPipelineRasterizationStateCreateInfo rsCI = {};
+    rsCI.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rsCI.polygonMode = VK_POLYGON_MODE_FILL;
+    rsCI.cullMode    = VK_CULL_MODE_NONE;
+    rsCI.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rsCI.lineWidth   = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo msCI = {};
+    msCI.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msCI.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blendAtt = {};
+    blendAtt.blendEnable         = VK_TRUE;
+    blendAtt.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAtt.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAtt.colorBlendOp        = VK_BLEND_OP_ADD;
+    blendAtt.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAtt.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAtt.alphaBlendOp        = VK_BLEND_OP_ADD;
+    blendAtt.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                 | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo cbCI = {};
+    cbCI.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cbCI.attachmentCount = 1;
+    cbCI.pAttachments    = &blendAtt;
+
+    VkPipelineDepthStencilStateCreateInfo dsCI = {};
+    dsCI.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+
+    const VkDynamicState dynStates[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynCI = {};
+    dynCI.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynCI.dynamicStateCount = 2;
+    dynCI.pDynamicStates    = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipeCI = {};
+    pipeCI.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeCI.stageCount          = 2;
+    pipeCI.pStages             = stages;
+    pipeCI.pVertexInputState   = &viCI;
+    pipeCI.pInputAssemblyState = &iaCI;
+    pipeCI.pViewportState      = &vpCI;
+    pipeCI.pRasterizationState = &rsCI;
+    pipeCI.pMultisampleState   = &msCI;
+    pipeCI.pDepthStencilState  = &dsCI;
+    pipeCI.pColorBlendState    = &cbCI;
+    pipeCI.pDynamicState       = &dynCI;
+    pipeCI.layout              = m_uiPipelineLayout;
+    pipeCI.renderPass          = m_renderPass;
+    pipeCI.subpass             = 0;
+
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipeCI,
+                                  nullptr, &m_uiPipeline) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to create scRGB UI pipeline");
+    }
+}
+
+void VulkanContext::destroyUiPipeline(bool keepLayouts)
+{
+    if (m_uiPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, m_uiPipeline, nullptr);
+        m_uiPipeline = VK_NULL_HANDLE;
+    }
+    if (keepLayouts)
+    {
+        return;
+    }
+    if (m_uiFragModule       != VK_NULL_HANDLE) { vkDestroyShaderModule(m_device,        m_uiFragModule,       nullptr); m_uiFragModule       = VK_NULL_HANDLE; }
+    if (m_uiVertModule       != VK_NULL_HANDLE) { vkDestroyShaderModule(m_device,        m_uiVertModule,       nullptr); m_uiVertModule       = VK_NULL_HANDLE; }
+    if (m_uiPipelineLayout   != VK_NULL_HANDLE) { vkDestroyPipelineLayout(m_device,      m_uiPipelineLayout,   nullptr); m_uiPipelineLayout   = VK_NULL_HANDLE; }
+    if (m_uiSetLayoutSampler != VK_NULL_HANDLE) { vkDestroyDescriptorSetLayout(m_device, m_uiSetLayoutSampler, nullptr); m_uiSetLayoutSampler = VK_NULL_HANDLE; }
+    if (m_uiSetLayoutTexture != VK_NULL_HANDLE) { vkDestroyDescriptorSetLayout(m_device, m_uiSetLayoutTexture, nullptr); m_uiSetLayoutTexture = VK_NULL_HANDLE; }
+}
+
 // ─── Display image ────────────────────────────────────────────────────────────
 
 void VulkanContext::createDisplayImage(int w, int h)
@@ -518,13 +837,16 @@ void VulkanContext::createDisplayImage(int w, int h)
     {
         return;
     }
-    const size_t pixelBytes = static_cast<size_t>(w) * h * 4u;  // uchar4
+    // float4 display image — matches the CUDA buffer byte-for-byte so the
+    // staging upload path is format-agnostic.
+    const VkFormat displayFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+    const size_t   pixelBytes    = static_cast<size_t>(w) * h * 16u;  // float4 = 4 × float
 
     // Device-local image (SAMPLED + TRANSFER_DST)
     VkImageCreateInfo imgCI = {};
     imgCI.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imgCI.imageType     = VK_IMAGE_TYPE_2D;
-    imgCI.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    imgCI.format        = displayFormat;
     imgCI.extent        = { (uint32_t)w, (uint32_t)h, 1 };
     imgCI.mipLevels     = 1;
     imgCI.arrayLayers   = 1;
@@ -590,7 +912,7 @@ void VulkanContext::createDisplayImage(int w, int h)
     viewCI.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewCI.image            = m_displayImage;
     viewCI.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    viewCI.format           = VK_FORMAT_R8G8B8A8_UNORM;
+    viewCI.format           = displayFormat;
     viewCI.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     vkCreateImageView(m_device, &viewCI, nullptr, &m_displayImageView);
 
@@ -718,8 +1040,16 @@ void VulkanContext::uploadDisplayImage(VkCommandBuffer cmd, const void* pixels, 
 
 void VulkanContext::beginRenderPass(VkCommandBuffer cmd)
 {
-    VkClearValue clearColor  = {};
-    clearColor.color         = {{ 0.10f, 0.10f, 0.15f, 1.0f }};
+    // Background clear — linearise the sRGB-authored values and scale to
+    // paper white, matching the UI pipeline's fragment shader.
+    VkClearValue clearColor = {};
+    {
+        const float s = m_uiScale;
+        clearColor.color = {{ std::pow(0.10f, 2.2f) * s,
+                              std::pow(0.10f, 2.2f) * s,
+                              std::pow(0.15f, 2.2f) * s,
+                              1.0f }};
+    }
 
     // Retrieve the current image index from the command buffer slot
     const uint32_t idx = [&]() -> uint32_t {
@@ -817,10 +1147,14 @@ ImGuiTexture VulkanContext::createImGuiTexture(int w, int h, const uint8_t* rgba
     const size_t pixelBytes = static_cast<size_t>(w) * h * 4u;
 
     // ── Device-local image ────────────────────────────────────────────────────
+    // Use an sRGB view so the sampler auto-linearises texels — the UI
+    // pipeline's shader multiplies textures in unconverted.
+    const VkFormat texFormat = VK_FORMAT_R8G8B8A8_SRGB;
+
     VkImageCreateInfo imgCI = {};
     imgCI.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imgCI.imageType     = VK_IMAGE_TYPE_2D;
-    imgCI.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    imgCI.format        = texFormat;
     imgCI.extent        = { static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1 };
     imgCI.mipLevels     = 1;
     imgCI.arrayLayers   = 1;
@@ -908,7 +1242,7 @@ ImGuiTexture VulkanContext::createImGuiTexture(int w, int h, const uint8_t* rgba
     viewCI.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewCI.image            = tex.image;
     viewCI.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    viewCI.format           = VK_FORMAT_R8G8B8A8_UNORM;
+    viewCI.format           = texFormat;
     viewCI.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     vkCreateImageView(m_device, &viewCI, nullptr, &tex.view);
 

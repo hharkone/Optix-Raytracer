@@ -45,11 +45,16 @@ private:
 
     std::unique_ptr<Scene> m_scene;  // owns geometry, materials, nodes, and the Accel
 
-    // Framebuffer — CUDA device/host buffers for the rendered image
-    uchar4*      d_colorBuffer   = nullptr;  // CUDA device buffer
-    uchar4*      h_colorBuffer   = nullptr;  // host staging buffer
+    // Framebuffer — CUDA device/host buffers for the rendered image (linear float4, scRGB).
+    float4*      d_colorBuffer   = nullptr;  // CUDA device buffer
+    float4*      h_colorBuffer   = nullptr;  // host staging buffer
     int          m_viewportWidth  = 0;       // current framebuffer dimensions
     int          m_viewportHeight = 0;       // driven by the Viewport panel size
+
+    // HDR display output — pure shader switch: when off the raygen tone-maps
+    // to the SDR range (Reinhard), when on it passes radiance through unclamped.
+    bool  m_hdrOutput      = false;
+    float m_paperWhiteNits = 250.0f;  // UI + image brightness (scRGB: 1.0 = 80 nits)
 
     // Vulkan presentation context (owns swapchain, render pass, display image, etc.)
     VulkanContext m_vkCtx;
