@@ -127,6 +127,61 @@ void Scene::addRootNode(int index)
     m_rootNodes.push_back(index);
 }
 
+// ─── Subtree duplication ─────────────────────────────────────────────────────
+
+static int duplicateSubtreeImpl(Scene& scene, int srcIdx, int newParentIdx)
+{
+    const Node3D& src = *scene.nodes()[srcIdx];
+
+    std::unique_ptr<Node3D> copy;
+    if (const auto* mn = dynamic_cast<const MeshNode*>(&src))
+    {
+        auto m         = std::make_unique<MeshNode>();
+        m->meshIndices = mn->meshIndices;   // share existing geometry + materials
+        copy           = std::move(m);
+    }
+    else if (dynamic_cast<const CameraNode*>(&src))
+    {
+        copy = std::make_unique<CameraNode>();
+    }
+    else
+    {
+        copy = std::make_unique<GroupNode>();
+    }
+
+    copy->name           = src.name.empty() ? "" : src.name + " (copy)";
+    copy->localTransform = src.localTransform;
+    copy->parent         = newParentIdx;
+
+    // Snapshot children before addNode — the push_back may reallocate m_nodes,
+    // invalidating the `src` reference obtained above.
+    const std::vector<int> srcChildren = src.children;
+
+    const int newIdx = scene.addNode(std::move(copy));
+
+    if (newParentIdx >= 0)
+    {
+        scene.nodeAt(newParentIdx).children.push_back(newIdx);
+    }
+    else
+    {
+        scene.addRootNode(newIdx);
+    }
+
+    for (int childIdx : srcChildren)
+    {
+        duplicateSubtreeImpl(scene, childIdx, newIdx);
+    }
+
+    return newIdx;
+}
+
+int Scene::duplicateSubtree(int nodeIdx)
+{
+    const int parentIdx = m_nodes[nodeIdx]->parent;
+    return duplicateSubtreeImpl(*this, nodeIdx, parentIdx);
+}
+
 Node3D& Scene::nodeAt(int index)
 {
     return *m_nodes[index];

@@ -46,6 +46,10 @@ public:
     void    addRootNode(int index);
     Node3D& nodeAt(int index);                       // mutable access for child-link wiring
 
+    // Deep-copies nodeIdx and its entire child subtree as a sibling of nodeIdx.
+    // Mesh and material indices are shared (not duplicated). Returns new root index.
+    int duplicateSubtree(int nodeIdx);
+
     const std::vector<std::unique_ptr<Node3D>>& nodes()     const;
     const std::vector<int>&                     rootNodes() const;
 

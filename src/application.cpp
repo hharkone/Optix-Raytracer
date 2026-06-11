@@ -955,7 +955,8 @@ void Application::updateCamera()
 
 // ─── Scene Graph helpers ──────────────────────────────────────────────────────
 
-static void drawNode3D(const Scene& scene, int nodeIdx, int& selectedNodeIdx)
+static void drawNode3D(const Scene& scene, int nodeIdx,
+                       int& selectedNodeIdx, int& duplicateNodeIdx)
 {
     const Node3D& node = *scene.nodes()[nodeIdx];
 
@@ -983,11 +984,21 @@ static void drawNode3D(const Scene& scene, int nodeIdx, int& selectedNodeIdx)
         selectedNodeIdx = nodeIdx;
     }
 
+    if (ImGui::BeginPopupContextItem("##node_ctx"))
+    {
+        selectedNodeIdx = nodeIdx;   // right-click also selects the node
+        if (ImGui::MenuItem("Duplicate"))
+        {
+            duplicateNodeIdx = nodeIdx;
+        }
+        ImGui::EndPopup();
+    }
+
     if (open && !node.children.empty())
     {
         for (int childIdx : node.children)
         {
-            drawNode3D(scene, childIdx, selectedNodeIdx);
+            drawNode3D(scene, childIdx, selectedNodeIdx, duplicateNodeIdx);
         }
         ImGui::TreePop();
     }
@@ -1913,9 +1924,26 @@ bool Application::tick()
                 std::filesystem::path(m_sceneFilePath).filename().string().c_str());
             ImGui::Separator();
         }
+        int duplicateNodeIdx = -1;
         for (int rootIdx : m_scene->rootNodes())
         {
-            drawNode3D(*m_scene, rootIdx, m_selectedNodeIdx);
+            drawNode3D(*m_scene, rootIdx, m_selectedNodeIdx, duplicateNodeIdx);
+        }
+
+        if (duplicateNodeIdx >= 0)
+        {
+            const int newIdx = m_scene->duplicateSubtree(duplicateNodeIdx);
+            try
+            {
+                m_scene->buildAccel(m_optixContext);
+            }
+            catch (const std::exception& e)
+            {
+                m_loadError = std::string("AS build failed: ") + e.what();
+            }
+            buildSbt();
+            m_selectedNodeIdx = newIdx;
+            m_accumDirty      = true;
         }
     }
 

@@ -13,6 +13,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 // ─── Error macros ─────────────────────────────────────────────────────────────
@@ -249,10 +250,10 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
     }
 
     // ── World-space transforms from node hierarchy ────────────────────────────
-    // Walk the Node3D tree and accumulate parent-to-world matrices.
-    // Each MeshNode writes its world transform to the meshes it references.
-    // Meshes not reachable from any node keep identity.
-    std::vector<Matrix4x4> meshWorld(meshes.size(), mat4Identity());
+    // Walk the Node3D tree and collect one (meshIndex, worldTransform) pair per
+    // MeshNode reference.  Multiple nodes referencing the same mesh each produce
+    // their own TLAS instance, so duplicated nodes render independently.
+    std::vector<std::pair<int, Matrix4x4>> meshInstances;
 
     if (!scene.rootNodes().empty())
     {
@@ -266,9 +267,9 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
             {
                 for (int mi : mn->meshIndices)
                 {
-                    if (mi >= 0 && mi < static_cast<int>(meshWorld.size()))
+                    if (mi >= 0 && mi < static_cast<int>(meshes.size()))
                     {
-                        meshWorld[mi] = world;
+                        meshInstances.push_back({mi, world});
                     }
                 }
             }
@@ -286,17 +287,23 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
         }
     }
 
-    // ── TLAS — one instance per mesh with world-space node transform ──────────
-    std::vector<OptixInstance> instances(meshes.size());
-
-    for (size_t i = 0; i < meshes.size(); ++i)
+    if (meshInstances.empty())
     {
-        OptixInstance& inst = instances[i];
+        return;
+    }
+
+    // ── TLAS — one instance per MeshNode mesh reference ───────────────────────
+    std::vector<OptixInstance> instances(meshInstances.size());
+
+    for (size_t i = 0; i < meshInstances.size(); ++i)
+    {
+        const int        meshIdx = meshInstances[i].first;
+        const Matrix4x4& w       = meshInstances[i].second;
+        OptixInstance&   inst    = instances[i];
         std::memset(&inst, 0, sizeof(inst));
 
         // OptiX instance transform = row-major 3×4 (last row [0,0,0,1] implicit).
         // Our Matrix4x4 is also row-major, so rows 0–2 copy directly.
-        const Matrix4x4& w = meshWorld[i];
         inst.transform[0]  = w.m[0][0];  inst.transform[1]  = w.m[0][1];
         inst.transform[2]  = w.m[0][2];  inst.transform[3]  = w.m[0][3];
         inst.transform[4]  = w.m[1][0];  inst.transform[5]  = w.m[1][1];
@@ -305,10 +312,10 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
         inst.transform[10] = w.m[2][2];  inst.transform[11] = w.m[2][3];
 
         inst.instanceId        = static_cast<unsigned int>(i);
-        inst.sbtOffset         = static_cast<unsigned int>(i);
+        inst.sbtOffset         = static_cast<unsigned int>(meshIdx);
         inst.visibilityMask    = 0xFF;
         inst.flags             = OPTIX_INSTANCE_FLAG_NONE;
-        inst.traversableHandle = m_meshBuffers[i].blas;
+        inst.traversableHandle = m_meshBuffers[meshIdx].blas;
     }
 
     const size_t instByteSize = instances.size() * sizeof(OptixInstance);
