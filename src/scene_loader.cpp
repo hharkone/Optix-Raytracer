@@ -153,7 +153,9 @@ static int buildNode3D(
         const int primCount = static_cast<int>(model.meshes[gNode.mesh].primitives.size());
         for (int p = 0; p < primCount; ++p)
         {
-            meshNode->meshIndices.push_back(first + p);
+            const int sceneIdx = first + p;
+            meshNode->meshIndices.push_back(sceneIdx);
+            meshNode->materialIndices.push_back(outScene.meshes()[sceneIdx].materialIndex);
         }
         node = std::move(meshNode);
     }

@@ -250,10 +250,16 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
     }
 
     // ── World-space transforms from node hierarchy ────────────────────────────
-    // Walk the Node3D tree and collect one (meshIndex, worldTransform) pair per
-    // MeshNode reference.  Multiple nodes referencing the same mesh each produce
-    // their own TLAS instance, so duplicated nodes render independently.
-    std::vector<std::pair<int, Matrix4x4>> meshInstances;
+    // Walk the Node3D tree and collect one record per MeshNode mesh reference.
+    // Multiple nodes referencing the same mesh each produce their own TLAS
+    // instance, so duplicated nodes render independently with independent materials.
+    struct MeshInst
+    {
+        int       meshIdx;
+        int       materialIdx;
+        Matrix4x4 world;
+    };
+    std::vector<MeshInst> meshInstances;
 
     if (!scene.rootNodes().empty())
     {
@@ -265,11 +271,15 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
 
             if (const MeshNode* mn = dynamic_cast<const MeshNode*>(&node))
             {
-                for (int mi : mn->meshIndices)
+                for (int j = 0; j < static_cast<int>(mn->meshIndices.size()); ++j)
                 {
+                    const int mi = mn->meshIndices[j];
                     if (mi >= 0 && mi < static_cast<int>(meshes.size()))
                     {
-                        meshInstances.push_back({mi, world});
+                        const int matIdx = (j < static_cast<int>(mn->materialIndices.size()))
+                            ? mn->materialIndices[j]
+                            : meshes[mi].materialIndex;
+                        meshInstances.push_back({mi, matIdx, world});
                     }
                 }
             }
@@ -293,13 +303,15 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
     }
 
     // ── TLAS — one instance per MeshNode mesh reference ───────────────────────
+    // sbtOffset = flat instance index i, matching the per-instance SBT records
+    // built by buildSbt() using the same node-tree walk order.
     std::vector<OptixInstance> instances(meshInstances.size());
 
     for (size_t i = 0; i < meshInstances.size(); ++i)
     {
-        const int        meshIdx = meshInstances[i].first;
-        const Matrix4x4& w       = meshInstances[i].second;
-        OptixInstance&   inst    = instances[i];
+        const MeshInst&  inst_data = meshInstances[i];
+        const Matrix4x4& w         = inst_data.world;
+        OptixInstance&   inst      = instances[i];
         std::memset(&inst, 0, sizeof(inst));
 
         // OptiX instance transform = row-major 3×4 (last row [0,0,0,1] implicit).
@@ -312,10 +324,10 @@ void Accel::buildTlasPhase(OptixDeviceContext ctx, const Scene& scene)
         inst.transform[10] = w.m[2][2];  inst.transform[11] = w.m[2][3];
 
         inst.instanceId        = static_cast<unsigned int>(i);
-        inst.sbtOffset         = static_cast<unsigned int>(meshIdx);
+        inst.sbtOffset         = static_cast<unsigned int>(i);
         inst.visibilityMask    = 0xFF;
         inst.flags             = OPTIX_INSTANCE_FLAG_NONE;
-        inst.traversableHandle = m_meshBuffers[meshIdx].blas;
+        inst.traversableHandle = m_meshBuffers[inst_data.meshIdx].blas;
     }
 
     const size_t instByteSize = instances.size() * sizeof(OptixInstance);

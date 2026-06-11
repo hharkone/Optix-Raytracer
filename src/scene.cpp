@@ -136,9 +136,10 @@ static int duplicateSubtreeImpl(Scene& scene, int srcIdx, int newParentIdx)
     std::unique_ptr<Node3D> copy;
     if (const auto* mn = dynamic_cast<const MeshNode*>(&src))
     {
-        auto m         = std::make_unique<MeshNode>();
-        m->meshIndices = mn->meshIndices;   // share existing geometry + materials
-        copy           = std::move(m);
+        auto m              = std::make_unique<MeshNode>();
+        m->meshIndices      = mn->meshIndices;      // share existing geometry
+        m->materialIndices  = mn->materialIndices;  // copy per-instance material assignments
+        copy                = std::move(m);
     }
     else if (dynamic_cast<const CameraNode*>(&src))
     {

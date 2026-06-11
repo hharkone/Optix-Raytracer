@@ -104,7 +104,8 @@ private:
     OptixShaderBindingTable m_sbt               = {};
 
     // Scene materials on device
-    CUdeviceptr m_materialsBuffer = 0;
+    CUdeviceptr m_materialsBuffer     = 0;
+    size_t      m_materialsBufferSize = 0;  // bytes currently allocated
 
     // Sample accumulation
     CUdeviceptr m_accumBuffer  = 0;

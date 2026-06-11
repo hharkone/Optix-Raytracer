@@ -30,7 +30,8 @@ public:
 class MeshNode : public Node3D
 {
 public:
-    std::vector<int> meshIndices;  // indices into Scene::m_meshes
+    std::vector<int> meshIndices;      // indices into Scene::m_meshes
+    std::vector<int> materialIndices;  // per-primitive material override; parallel to meshIndices
     const char* typeName() const override { return "Mesh"; }
 };
 

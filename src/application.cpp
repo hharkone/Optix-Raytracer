@@ -19,6 +19,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -526,22 +527,57 @@ void Application::buildSbt()
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_sbtMissBuffer), sizeof(missRecs)));
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_sbtMissBuffer), missRecs, sizeof(missRecs), cudaMemcpyHostToDevice));
 
-    // ── Hit group records — one per mesh ──────────────────────────────────────
-    const auto& meshes = m_scene->meshes();
-    std::vector<HitGroupRecord> hitRecs(meshes.size());
+    // ── Hit group records — one per TLAS instance ────────────────────────────
+    // Walk the node tree in the same DFS order as buildTlasPhase so that
+    // TLAS instance i and SBT record i always correspond.
+    const auto& meshes   = m_scene->meshes();
+    const auto& allNodes = m_scene->nodes();
 
-    for (size_t i = 0; i < meshes.size(); ++i)
+    struct InstRecord { int meshIdx; int materialIdx; };
+    std::vector<InstRecord> instList;
+
+    std::function<void(int)> walk = [&](int nodeIdx)
+    {
+        const Node3D& node = *allNodes[nodeIdx];
+        if (const MeshNode* mn = dynamic_cast<const MeshNode*>(&node))
+        {
+            for (int j = 0; j < static_cast<int>(mn->meshIndices.size()); ++j)
+            {
+                const int mi = mn->meshIndices[j];
+                if (mi >= 0 && mi < static_cast<int>(meshes.size()))
+                {
+                    const int matIdx = (j < static_cast<int>(mn->materialIndices.size()))
+                        ? mn->materialIndices[j]
+                        : meshes[mi].materialIndex;
+                    instList.push_back({mi, matIdx});
+                }
+            }
+        }
+        for (int childIdx : node.children)
+        {
+            walk(childIdx);
+        }
+    };
+
+    for (int rootIdx : m_scene->rootNodes())
+    {
+        walk(rootIdx);
+    }
+
+    std::vector<HitGroupRecord> hitRecs(instList.size());
+
+    for (size_t i = 0; i < instList.size(); ++i)
     {
         OPTIX_CHECK(optixSbtRecordPackHeader(m_pgHitgroup, &hitRecs[i]));
 
         if (m_scene->hasAccel())
         {
-            const auto ptrs            = m_scene->meshDevicePtrs(i);
-            hitRecs[i].data.positions  = reinterpret_cast<const float3*>(ptrs.positions);
-            hitRecs[i].data.normals    = reinterpret_cast<const float3*>(ptrs.normals);
-            hitRecs[i].data.indices    = reinterpret_cast<const uint3*>(ptrs.indices);
-            hitRecs[i].data.uvs        = reinterpret_cast<const float2*>(ptrs.uvs);
-            hitRecs[i].data.materialIndex = meshes[i].materialIndex;
+            const auto ptrs               = m_scene->meshDevicePtrs(instList[i].meshIdx);
+            hitRecs[i].data.positions     = reinterpret_cast<const float3*>(ptrs.positions);
+            hitRecs[i].data.normals       = reinterpret_cast<const float3*>(ptrs.normals);
+            hitRecs[i].data.indices       = reinterpret_cast<const uint3*>(ptrs.indices);
+            hitRecs[i].data.uvs           = reinterpret_cast<const float2*>(ptrs.uvs);
+            hitRecs[i].data.materialIndex = instList[i].materialIdx;
         }
     }
 
@@ -689,10 +725,17 @@ void Application::uploadMaterials()
     }
     const size_t matBytes = mats.size() * sizeof(MaterialData);
 
-    // Allocate on first call or if the buffer is gone; otherwise reuse.
+    // Reallocate if the buffer is absent or too small; otherwise reuse.
+    if (m_materialsBuffer && m_materialsBufferSize < matBytes)
+    {
+        cudaFree(reinterpret_cast<void*>(m_materialsBuffer));
+        m_materialsBuffer     = 0;
+        m_materialsBufferSize = 0;
+    }
     if (!m_materialsBuffer)
     {
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&m_materialsBuffer), matBytes));
+        m_materialsBufferSize = matBytes;
     }
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(m_materialsBuffer),
                            mats.data(), matBytes, cudaMemcpyHostToDevice));
@@ -1641,7 +1684,18 @@ bool Application::tick()
         bool anyMatChanged = false;
 
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 8.0f));
-        const bool matsOpen = ImGui::CollapsingHeader(matsHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        const bool matsOpen = ImGui::CollapsingHeader(matsHeader.c_str(),
+            ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+        {
+            const float btnH = ImGui::GetFrameHeight();
+            ImGui::SameLine(ImGui::GetContentRegionMax().x - btnH);
+            if (ImGui::Button("+##addmat", ImVec2(btnH, btnH)))
+            {
+                m_scene->addMaterial(MaterialData{}, "New Material");
+                uploadMaterials();
+                m_accumDirty = true;
+            }
+        }
         ImGui::PopStyleVar();
         if (matsOpen)
         {
@@ -2035,25 +2089,58 @@ bool Application::tick()
             auto& mats      = m_scene->materials();
             bool  anyChanged = false;
 
-            for (int meshIdx : meshNode->meshIndices)
+            // Ensure materialIndices is sized to match meshIndices.
+            // Can be shorter for nodes created before this field existed.
             {
-                const int matIdx = m_scene->meshes()[meshIdx].materialIndex;
-                if (matIdx < 0 || matIdx >= static_cast<int>(mats.size()))
+                const size_t needed  = meshNode->meshIndices.size();
+                const size_t current = meshNode->materialIndices.size();
+                for (size_t k = current; k < needed; ++k)
                 {
-                    continue;
+                    const int mi = meshNode->meshIndices[k];
+                    const int def = (mi >= 0 && mi < static_cast<int>(mats.size()))
+                        ? m_scene->meshes()[mi].materialIndex : 0;
+                    meshNode->materialIndices.push_back(def);
+                }
+            }
+
+            const auto matLabel = [&](int idx) -> std::string {
+                const std::string& n = m_scene->materialName(idx);
+                return n.empty() ? ("Material " + std::to_string(idx)) : n;
+            };
+
+            for (int j = 0; j < static_cast<int>(meshNode->meshIndices.size()); ++j)
+            {
+                int& matIdx = meshNode->materialIndices[j];
+
+                ImGui::PushID(j);
+
+                const std::string preview = (matIdx >= 0 && matIdx < static_cast<int>(mats.size()))
+                    ? matLabel(matIdx) : "(none)";
+
+                if (ImGui::BeginCombo("Material##mesh", preview.c_str()))
+                {
+                    for (int k = 0; k < static_cast<int>(mats.size()); ++k)
+                    {
+                        const bool selected = (k == matIdx);
+                        if (ImGui::Selectable(matLabel(k).c_str(), selected))
+                        {
+                            matIdx     = k;
+                            anyChanged = true;
+                        }
+                        if (selected)
+                        {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
                 }
 
-                const std::string& matName = m_scene->materialName(matIdx);
-                const std::string  header  = matName.empty() ? ("Material id:" + std::to_string(matIdx)) : ("Material: " + matName);
-
-                ImGui::PushID(meshIdx);
-                ImGui::Text(header.c_str());
                 ImGui::PopID();
             }
 
             if (anyChanged)
             {
-                uploadMaterials();
+                buildSbt();
                 m_accumDirty = true;
             }
         }

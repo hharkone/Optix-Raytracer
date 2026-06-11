@@ -267,13 +267,13 @@ void HdriBrowser::generateThumbnail(const float* src, int srcW, int srcH,
 
     for (int dy = 0; dy < dstH; ++dy)
     {
-        const int sy0 = static_cast<int>(dy       * scaleY);
-        const int sy1 = std::min(static_cast<int>((dy + 1) * scaleY), srcH);
+        const int sy0 = static_cast<int>(dy * scaleY);
+        const int sy1 = std::max(sy0 + 1, std::min(static_cast<int>((dy + 1) * scaleY), srcH));
 
         for (int dx = 0; dx < dstW; ++dx)
         {
-            const int sx0 = static_cast<int>(dx       * scaleX);
-            const int sx1 = std::min(static_cast<int>((dx + 1) * scaleX), srcW);
+            const int sx0 = static_cast<int>(dx * scaleX);
+            const int sx1 = std::max(sx0 + 1, std::min(static_cast<int>((dx + 1) * scaleX), srcW));
 
             float r = 0.0f, g = 0.0f, b = 0.0f;
             int   n = 0;
