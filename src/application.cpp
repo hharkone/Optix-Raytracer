@@ -235,7 +235,7 @@ void Application::initImGui()
     // actually active on the display; when HDR is off DWM maps scRGB 1.0 →
     // display-white, so applying the paper-white multiplier would inflate mid-
     // tones (e.g., sRGB 0.5 → 68% brightness instead of the correct 21.7%).
-    m_vkCtx.setUiScale(m_vkCtx.isDisplayHdrOn() ? (m_paperWhiteNits / 80.0f) : 1.0f);
+    m_vkCtx.setUiScale(m_vkCtx.isScRgbSwapchain() ? (m_paperWhiteNits / 80.0f) : 1.0f);
 
     m_vkCtx.initImGui(m_window, m_vkCtx.swapchainImageCount());
 }
@@ -1150,7 +1150,9 @@ bool Application::tick()
         }
 
         m_launchParams.colorBuffer = d_colorBuffer;
-        m_launchParams.hdrDisplay  = m_hdrOutput ? 1 : 0;
+        m_launchParams.hdrDisplay  = m_vkCtx.isScRgbSwapchain()
+                                         ? (m_hdrOutput ? 1 : 0)
+                                         : 2;
         m_launchParams.fbSize            = make_uint2(static_cast<unsigned int>(m_viewportWidth), static_cast<unsigned int>(m_viewportHeight));
         m_launchParams.traversable       = m_scene->traversable();
         m_launchParams.envMap            = m_envMap.gpuTex;
@@ -1280,17 +1282,25 @@ bool Application::tick()
                 pixelCount * sizeof(float4),
                 cudaMemcpyDeviceToHost));
 
-            // Mirror the raygen encode: pass-through for HDR, Reinhard for SDR look.
+            // Mirror the raygen encode (hdrDisplay modes 0/1/2).
+            const bool scRgb    = m_vkCtx.isScRgbSwapchain();
+            const bool applyGamma = !scRgb;
             for (size_t i = 0; i < pixelCount; ++i)
             {
                 float r = h_hdrBuffer[i].x;
                 float g = h_hdrBuffer[i].y;
                 float b = h_hdrBuffer[i].z;
-                if (!m_hdrOutput)
+                if (!m_hdrOutput || !scRgb)
                 {
                     r = r / (r + 1.0f);
                     g = g / (g + 1.0f);
                     b = b / (b + 1.0f);
+                    if (applyGamma)
+                    {
+                        r = std::pow(r, 1.0f / 2.2f);
+                        g = std::pow(g, 1.0f / 2.2f);
+                        b = std::pow(b, 1.0f / 2.2f);
+                    }
                 }
                 h_colorBuffer[i] = make_float4(r, g, b, 1.0f);
             }
@@ -1604,57 +1614,43 @@ bool Application::tick()
     // ── HDR output (scRGB swapchain) ──────────────────────────────────────────
     ImGui::Separator();
     {
+        const bool scRgb = m_vkCtx.isScRgbSwapchain();
+        if (!scRgb)
+        {
+            ImGui::BeginDisabled();
+        }
         if (ImGui::Checkbox("HDR Output", &m_hdrOutput))
         {
             // The display encode changed — a cached denoised frame is stale;
             // the live raygen output picks up the new encode next launch.
             m_hasValidDenoisedFrame = false;
         }
-
-        // DXGI hint, polled ~once a second.  When Windows HDR is off the scRGB
-        // output still displays, but scRGB 1.0 = display-white (not 80 nits),
-        // so the paper-white multiplier must not be applied — doing so would
-        // inflate mid-tones and make the colour picker look too bright.
-        // Detect state changes here and update the UI pipeline scale accordingly.
-        static bool windowsHdrOn     = false;
-        static bool prevWindowsHdrOn = false;
-        static int  hdrPollFrames    = 0;
-        if (hdrPollFrames-- <= 0)
+        if (!scRgb)
         {
-            hdrPollFrames = 60;
-            windowsHdrOn  = m_vkCtx.isDisplayHdrOn();
-            if (windowsHdrOn != prevWindowsHdrOn)
-            {
-                prevWindowsHdrOn = windowsHdrOn;
-                m_vkCtx.setUiScale(windowsHdrOn ? (m_paperWhiteNits / 80.0f) : 1.0f);
-            }
-        }
-        if (m_hdrOutput && !windowsHdrOn)
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
-                "Windows HDR is off - highlights will clip");
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip(
-                    "Enable HDR for this display in Windows Settings > System > Display.");
-            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextDisabled("(no HDR display)");
         }
 
-        // Paper-white only applies (and the pipeline scale update only matters)
-        // when Windows HDR is actually on; grey the slider out otherwise so it
-        // is clear that the setting is held in reserve for when HDR is enabled.
-        if (!windowsHdrOn)
+        // Update the UI pipeline scale whenever the scRGB state changes (e.g.
+        // after a swapchain recreation triggered by moving to a different display).
+        static bool prevScRgb = false;
+        if (scRgb != prevScRgb)
+        {
+            prevScRgb = scRgb;
+            m_vkCtx.setUiScale(scRgb ? (m_paperWhiteNits / 80.0f) : 1.0f);
+        }
+
+        // Paper-white slider only applies when the scRGB swapchain is active.
+        if (!scRgb)
         {
             ImGui::BeginDisabled();
         }
         if (ImGui::SliderFloat("Paper White (nits)", &m_paperWhiteNits, 80.0f, 480.0f, "%.0f"))
         {
-            // Rebuilds the UI pipeline (specialization constant).  Safe here:
-            // this frame's draw data is recorded after the panel code, and
-            // setUiScale waits for in-flight frames before destroying.
             m_vkCtx.setUiScale(m_paperWhiteNits / 80.0f);
         }
-        if (!windowsHdrOn)
+        if (!scRgb)
         {
             ImGui::EndDisabled();
         }
@@ -1861,6 +1857,14 @@ bool Application::tick()
                             anyMatChanged = true;
                         }
                         if (ImGui::DragFloat("Absorption Dist.", &mats[i].absorptionDistance, 0.002f, 0.0001f, 1000.0f, "%.4f"))
+                        {
+                            anyMatChanged = true;
+                        }
+                        if (ImGui::DragFloat("Scattering MFP",  &mats[i].scattering,          0.002f, 0.0f, 1000.0f, "%.4f"))
+                        {
+                            anyMatChanged = true;
+                        }
+                        if (ImGui::SliderFloat("Scatter Aniso.", &mats[i].scatteringAnisotropy, -1.0f, 1.0f, "%.3f"))
                         {
                             anyMatChanged = true;
                         }

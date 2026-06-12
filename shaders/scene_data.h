@@ -33,9 +33,11 @@ struct MaterialData
     float  emissionScale    = 1.0f;
     int    emissionTexture  = -1;   // index into device texture array; -1 = no texture
 
-    float  transmission       = 0.0f;  // 0 = opaque, 1 = fully transmissive
-    float  ior                = 1.5f;  // index of refraction (glass ≈ 1.5)
-    float  absorptionDistance = 1.0f;  // world-space distance for full albedo absorption
+    float  transmission          = 0.0f;  // 0 = opaque, 1 = fully transmissive
+    float  ior                   = 1.5f;  // index of refraction (glass ≈ 1.5)
+    float  absorptionDistance    = 1.0f;  // world-space distance for full albedo absorption
+    float  scattering            = 0.0f;  // mean free path (world units); 0 = disabled
+    float  scatteringAnisotropy  = 0.0f;  // Henyey-Greenstein g [-1 back, 0 iso, +1 forward]
 
     float  clearcoat          = 0.0f;  // KHR_materials_clearcoat intensity [0, 1]
     float  clearcoatRoughness = 0.0f;  // clearcoat layer roughness [0, 1]

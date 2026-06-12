@@ -53,20 +53,22 @@ public:
     void recreateSwapchain(int w, int h);
 
     // ── scRGB presentation ────────────────────────────────────────────────────
-    // The swapchain always uses R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR
-    // (requires VK_EXT_swapchain_colorspace, available on all modern drivers).
-    // ImGui is rendered through a custom pipeline (uiPipeline) whose fragment
-    // shader linearises sRGB-authored UI colours and scales them to paper white,
-    // keeping the colour picker identical to a standard sRGB display.
+    // The swapchain uses R16G16B16A16_SFLOAT in all cases.  When an HDR
+    // display is active, the color space is EXTENDED_SRGB_LINEAR (true scRGB:
+    // values > 1.0 appear above paper white).  Without an HDR display the
+    // driver does not enumerate that color space, so the fallback is
+    // R16G16B16A16_SFLOAT + SRGB_NONLINEAR (FP16 precision, but values above
+    // 1.0 clip).  isScRgbSwapchain() distinguishes the two cases.
 
-    // True when Windows reports HDR enabled for the monitor showing the
-    // window (DXGI query).  Purely a UI hint: with HDR off, scRGB values
-    // above 1.0 are clamped by the compositor (highlights clip).
-    bool isDisplayHdrOn() const;
+    // True when the swapchain uses EXTENDED_SRGB_LINEAR (HDR presentation
+    // active).  False = FP16 swapchain present but HDR not available on the
+    // current display.
+    bool isScRgbSwapchain() const { return m_scRgbSwapchain; }
 
-    // Pipeline to pass to ImGui_ImplVulkan_RenderDrawData — converts sRGB
-    // vertex colours to linear and scales to paper white.
-    VkPipeline uiPipeline() const { return m_uiPipeline; }
+    // Pipeline to pass to ImGui_ImplVulkan_RenderDrawData.  Returns the custom
+    // scRGB-linearising pipeline when scRGB is active; VK_NULL_HANDLE when the
+    // fallback FP16+SRGB_NONLINEAR path is used (ImGui uses its default then).
+    VkPipeline uiPipeline() const { return m_scRgbSwapchain ? m_uiPipeline : VK_NULL_HANDLE; }
 
     // Paper-white scale (paperWhiteNits / 80) for the scRGB UI pipeline and
     // the render-pass clear colour.  Recreates the UI pipeline (the scale is
@@ -156,6 +158,7 @@ private:
 
     // ── scRGB presentation state ──────────────────────────────────────────────
     bool  m_hasColorspaceExt = false;  // VK_EXT_swapchain_colorspace enabled on the instance
+    bool  m_scRgbSwapchain   = false;  // true = EXTENDED_SRGB_LINEAR; false = SRGB_NONLINEAR fallback
     float m_uiScale          = 1.0f;   // paperWhiteNits / 80 — UI pipeline + clear colour
 
     // Custom ImGui pipeline for scRGB swapchains.  Layout-compatible clone of

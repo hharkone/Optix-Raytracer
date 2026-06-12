@@ -15,70 +15,6 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-// DXGI is needed to detect whether Windows HDR is enabled for the display the
-// window is on.  Vulkan can't answer this: drivers list the FP16/scRGB surface
-// format even on SDR displays (DWM silently clamps the output), so the format
-// list alone always looks "HDR-capable".
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
-#include <dxgi1_6.h>
-#endif
-
-// True when the OS reports HDR enabled for the monitor showing the window.
-// On Windows this checks the DXGI output colour space (ST2084/HDR10 = HDR on).
-static bool isDisplayHdrEnabled(GLFWwindow* window)
-{
-#ifdef _WIN32
-    const HWND hwnd = glfwGetWin32Window(window);
-    if (!hwnd)
-    {
-        return false;
-    }
-    const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-
-    IDXGIFactory1* factory = nullptr;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
-                                  reinterpret_cast<void**>(&factory))))
-    {
-        return false;
-    }
-
-    bool hdr = false;
-    IDXGIAdapter1* adapter = nullptr;
-    for (UINT a = 0;
-         !hdr && factory->EnumAdapters1(a, &adapter) != DXGI_ERROR_NOT_FOUND;
-         ++a)
-    {
-        IDXGIOutput* output = nullptr;
-        for (UINT o = 0;
-             !hdr && adapter->EnumOutputs(o, &output) != DXGI_ERROR_NOT_FOUND;
-             ++o)
-        {
-            IDXGIOutput6* output6 = nullptr;
-            if (SUCCEEDED(output->QueryInterface(__uuidof(IDXGIOutput6),
-                                                 reinterpret_cast<void**>(&output6))))
-            {
-                DXGI_OUTPUT_DESC1 desc = {};
-                if (SUCCEEDED(output6->GetDesc1(&desc))
-                    && desc.Monitor == monitor
-                    && desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
-                {
-                    hdr = true;
-                }
-                output6->Release();
-            }
-            output->Release();
-        }
-        adapter->Release();
-    }
-    factory->Release();
-    return hdr;
-#else
-    (void)window;
-    return false;
-#endif
-}
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -335,9 +271,11 @@ void VulkanContext::createSwapchain(int w, int h)
     VkSurfaceCapabilitiesKHR caps = {};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physDevice, m_surface, &caps);
 
-    // Format — always use scRGB FP16 (R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR).
-    // VK_EXT_swapchain_colorspace is present on all modern drivers; the format
-    // pair is listed regardless of the Windows HDR display setting.
+    // Format — prefer R16G16B16A16_SFLOAT + EXTENDED_SRGB_LINEAR (true scRGB HDR).
+    // NVIDIA only enumerates EXTENDED_SRGB_LINEAR when Windows HDR is enabled on
+    // the active display.  Fall back to R16G16B16A16_SFLOAT + SRGB_NONLINEAR when
+    // the HDR color space is absent: FP16 precision is retained but values above
+    // 1.0 clip at the compositor.  m_scRgbSwapchain tracks which case is active.
     uint32_t fmtCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_physDevice, m_surface, &fmtCount, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(fmtCount);
@@ -355,10 +293,35 @@ void VulkanContext::createSwapchain(int w, int h)
     }
     if (chosen.format == VK_FORMAT_UNDEFINED)
     {
-        throw std::runtime_error(
-            "scRGB FP16 surface format not available — "
-            "update your GPU driver or enable VK_EXT_swapchain_colorspace");
+        // No HDR display / HDR off — look for plain FP16 as SDR fallback.
+        for (auto& f : fmts)
+        {
+            if (f.format == VK_FORMAT_R16G16B16A16_SFLOAT)
+            {
+                chosen = f;
+                break;
+            }
+        }
     }
+    if (chosen.format == VK_FORMAT_UNDEFINED)
+    {
+        // FP16 surface not available (DWM restricts swapchain formats to 8-bit
+        // on non-HDR displays regardless of GPU capability) — fall back to BGRA8.
+        for (auto& f : fmts)
+        {
+            if (f.format == VK_FORMAT_B8G8R8A8_UNORM
+             && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+                chosen = f;
+                break;
+            }
+        }
+    }
+    if (chosen.format == VK_FORMAT_UNDEFINED)
+    {
+        chosen = fmts[0];  // last resort: whatever the driver offers
+    }
+    m_scRgbSwapchain = (chosen.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT);
     m_scFormat = chosen.format;
 
     // Extent
@@ -621,11 +584,6 @@ void VulkanContext::recreateSwapchain(int w, int h)
 }
 
 // ─── scRGB presentation ───────────────────────────────────────────────────────
-
-bool VulkanContext::isDisplayHdrOn() const
-{
-    return isDisplayHdrEnabled(m_window);
-}
 
 void VulkanContext::setUiScale(float scale)
 {
@@ -1040,15 +998,15 @@ void VulkanContext::uploadDisplayImage(VkCommandBuffer cmd, const void* pixels, 
 
 void VulkanContext::beginRenderPass(VkCommandBuffer cmd)
 {
-    // Background clear — linearise the sRGB-authored values and scale to
-    // paper white, matching the UI pipeline's fragment shader.
+    // Background clear — when using the scRGB pipeline, linearise the
+    // sRGB-authored value and scale to paper white.  On the FP16+SRGB_NONLINEAR
+    // fallback path the compositor expects sRGB-encoded values, so keep as-is.
     VkClearValue clearColor = {};
     {
-        const float s = m_uiScale;
-        clearColor.color = {{ std::pow(0.10f, 2.2f) * s,
-                              std::pow(0.10f, 2.2f) * s,
-                              std::pow(0.15f, 2.2f) * s,
-                              1.0f }};
+        const float s  = m_scRgbSwapchain ? m_uiScale : 1.0f;
+        const float rg = m_scRgbSwapchain ? std::pow(0.10f, 2.2f) * s : 0.10f;
+        const float b  = m_scRgbSwapchain ? std::pow(0.15f, 2.2f) * s : 0.15f;
+        clearColor.color = {{ rg, rg, b, 1.0f }};
     }
 
     // Retrieve the current image index from the command buffer slot

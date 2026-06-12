@@ -65,12 +65,14 @@ struct PathVertex
     float3 emission;     // pre-scaled emissive radiance (emission * emissionScale)
     float  roughness;    // perceptual roughness [0, 1]
     float  metallic;     // metallic factor [0, 1]
-    float  transmission;        // 0 = opaque, 1 = fully transmissive
-    float  ior;                 // index of refraction
-    float  absorptionDistance;  // world-space units for full albedo absorption
-    float  clearcoat;           // clearcoat layer intensity [0, 1]
-    float  clearcoatRoughness;  // clearcoat layer roughness [0, 1]
-    int    thinWalled;          // 1 = zero-thickness surface; pass through without refraction
+    float  transmission;         // 0 = opaque, 1 = fully transmissive
+    float  ior;                  // index of refraction
+    float  absorptionDistance;   // world-space units for full albedo absorption
+    float  scattering;           // mean free path (world units); 0 = disabled
+    float  scatteringAnisotropy; // Henyey-Greenstein g [-1, +1]
+    float  clearcoat;            // clearcoat layer intensity [0, 1]
+    float  clearcoatRoughness;   // clearcoat layer roughness [0, 1]
+    int    thinWalled;           // 1 = zero-thickness surface; pass through without refraction
     float  t;                   // ray travel distance to this hit (Beer-Lambert)
     int    hit;          // 1 = geometry hit, 0 = ray escaped to background
 };
@@ -115,6 +117,27 @@ float3 cosineSampleHemisphere(float r1, float r2)
     const float phi     = 2.0f * 3.14159265358979f * r1;
     const float sqrtR2  = sqrtf(r2);
     return make_float3(cosf(phi)*sqrtR2, sinf(phi)*sqrtR2, sqrtf(1.0f - r2));
+}
+
+// Henyey-Greenstein phase function.  Returns a direction in a local frame
+// where the forward (incident) direction is +z.  g in [-1, 1].
+static __forceinline__ __device__
+float3 sampleHenyeyGreenstein(float g, float xi1, float xi2)
+{
+    float cosTheta;
+    if (fabsf(g) < 1e-4f)
+    {
+        cosTheta = 1.0f - 2.0f * xi1;
+    }
+    else
+    {
+        const float denom = 1.0f - g + 2.0f * g * xi1;
+        const float sq    = (1.0f - g * g) / denom;
+        cosTheta = (1.0f + g * g - sq * sq) / (2.0f * g);
+    }
+    const float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+    const float phi      = 2.0f * 3.14159265358979f * xi2;
+    return make_float3(sinTheta * cosf(phi), sinTheta * sinf(phi), cosTheta);
 }
 
 // Orthonormal tangent frame around N (Duff et al. 2017).
@@ -370,18 +393,25 @@ float evalEnvMapPdf(float3 dir)
 }
 
 // ─── Display write-out ────────────────────────────────────────────────────────
-// Writes a linear-radiance colour to the scRGB float4 display buffer.
-// hdrDisplay=1: radiance passes through unclamped (HDR highlights).
-// hdrDisplay=0: Reinhard tone-maps to the SDR range [0, 1).
+// Writes a linear-radiance colour to the float4 display buffer.
+// hdrDisplay=0: Reinhard only — linear [0,1] for scRGB/EXTENDED_SRGB_LINEAR.
+// hdrDisplay=1: unclamped linear scRGB — HDR highlights exceed 1.0.
+// hdrDisplay=2: Reinhard + gamma 1/2.2 — sRGB-encoded for SRGB_NONLINEAR swapchain.
 static __forceinline__ __device__
 void writeDisplay(unsigned int fbIdx, float3 linear)
 {
     float3 c = linear;
-    if (!optixLaunchParams.hdrDisplay)
+    if (optixLaunchParams.hdrDisplay == 0)
     {
         c.x = c.x / (c.x + 1.0f);
         c.y = c.y / (c.y + 1.0f);
         c.z = c.z / (c.z + 1.0f);
+    }
+    else if (optixLaunchParams.hdrDisplay == 2)
+    {
+        c.x = powf(c.x / (c.x + 1.0f), 1.0f / 2.2f);
+        c.y = powf(c.y / (c.y + 1.0f), 1.0f / 2.2f);
+        c.z = powf(c.z / (c.z + 1.0f), 1.0f / 2.2f);
     }
     optixLaunchParams.colorBuffer[fbIdx] = make_float4(c.x, c.y, c.z, 1.0f);
 }
@@ -783,6 +813,35 @@ extern "C" __global__ void __raygen__renderFrame()
                 const float3 faceN    = entering ? vtx.N : -vtx.N;
                 const float  eta      = entering ? (1.0f / vtx.ior) : vtx.ior;
 
+                // ── Volumetric scattering ─────────────────────────────────────────
+                // On exit (entering=false) the ray traveled from rayOrig through the
+                // glass interior to vtx.pos over distance vtx.t.  Sample whether a
+                // scatter event occurs before the exit surface: t ~ Exp(1/mfp).
+                // Beer-Lambert was already applied for vtx.t so undo the excess.
+                bool scattered = false;
+                if (!entering && vtx.scattering > 0.0f)
+                {
+                    const float t_scatter = -vtx.scattering * logf(fmaxf(1e-6f, rnd(seed)));
+                    if (t_scatter < vtx.t)
+                    {
+                        const float excess = vtx.t - t_scatter;
+                        throughput.x *= expf(absorb.x * excess);
+                        throughput.y *= expf(absorb.y * excess);
+                        throughput.z *= expf(absorb.z * excess);
+
+                        const float3 scatterPos = rayOrig + rayDir * t_scatter;
+                        float3 Ts, Bs;
+                        buildONB(rayDir, Ts, Bs);
+                        const float3 localDir = sampleHenyeyGreenstein(
+                            vtx.scatteringAnisotropy, rnd(seed), rnd(seed));
+                        rayDir  = devNormalize(Ts * localDir.x + Bs * localDir.y + rayDir * localDir.z);
+                        rayOrig = scatterPos;
+                        scattered = true;
+                    }
+                }
+
+                if (!scattered)
+                {
                 // Sample a GGX microfacet normal (same VNDF as the specular lobe).
                 // At alpha → 0 this converges to the macro normal → smooth glass.
                 // At higher alpha the half-vector is scattered → frosted glass.
@@ -828,6 +887,7 @@ extern "C" __global__ void __raygen__renderFrame()
                 // On TIR devRefract writes the reflected direction; offset stays on
                 // the same side.  On true refraction offset to the far side.
                 rayOrig = vtx.pos + faceN * (refracted ? -1e-3f : 1e-3f);
+                }   // end if (!scattered)
                 }   // end thick refraction else (not thin-walled)
                 }   // end refraction else
             }   // end non-specular else (diffuse / refraction)
@@ -1014,8 +1074,10 @@ extern "C" __global__ void __closesthit__radiance()
         }
         vtx->transmission       = mat.transmission;
         vtx->ior                = mat.ior;
-        vtx->absorptionDistance = fmaxf(mat.absorptionDistance, 1e-4f);
-        vtx->clearcoat          = mat.clearcoat;
+        vtx->absorptionDistance   = fmaxf(mat.absorptionDistance, 1e-4f);
+        vtx->scattering           = fmaxf(mat.scattering, 0.0f);
+        vtx->scatteringAnisotropy = mat.scatteringAnisotropy;
+        vtx->clearcoat            = mat.clearcoat;
         vtx->clearcoatRoughness = mat.clearcoatRoughness;
         vtx->thinWalled         = mat.thinWalled;
     }
