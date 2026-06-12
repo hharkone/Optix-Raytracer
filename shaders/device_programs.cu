@@ -68,7 +68,7 @@ struct PathVertex
     float  transmission;         // 0 = opaque, 1 = fully transmissive
     float  ior;                  // index of refraction
     float  absorptionDistance;   // world-space units for full albedo absorption
-    float  scattering;           // mean free path (world units); 0 = disabled
+    float3 scatteringCoeff;      // per-channel σ_s (1/MFP); (0,0,0) = disabled
     float  scatteringAnisotropy; // Henyey-Greenstein g [-1, +1]
     float  clearcoat;            // clearcoat layer intensity [0, 1]
     float  clearcoatRoughness;   // clearcoat layer roughness [0, 1]
@@ -153,13 +153,27 @@ void buildONB(float3 N, float3& T, float3& B)
 
 // ─── PBR helpers ─────────────────────────────────────────────────────────────
 
-// Schlick Fresnel approximation.
+// Schlick Fresnel approximation (for metals: F0 = albedo).
 static __forceinline__ __device__
 float3 devFresnel(float cosTheta, float3 F0)
 {
     const float t  = 1.0f - devClamp01(cosTheta);
     const float t5 = t * t * t * t * t;
     return F0 + (make_float3(1.0f, 1.0f, 1.0f) - F0) * t5;
+}
+
+// Exact unpolarised Fresnel for a dielectric interface.
+// eta = n_incident / n_transmitted (same convention as devRefract).
+// Correctly returns 0.0 at all angles when eta = 1.0 (IOR = 1).
+static __forceinline__ __device__
+float devFresnelDielectric(float cosI, float eta)
+{
+    const float sinT2 = eta * eta * fmaxf(0.0f, 1.0f - cosI * cosI);
+    if (sinT2 >= 1.0f) { return 1.0f; }  // total internal reflection
+    const float cosT = sqrtf(1.0f - sinT2);
+    const float rs   = (eta * cosI - cosT) / (eta * cosI + cosT);
+    const float rp   = (cosI - eta * cosT) / (cosI + eta * cosT);
+    return 0.5f * (rs * rs + rp * rp);
 }
 
 // Sample GGX visible normals (Heitz 2018).
@@ -625,11 +639,11 @@ extern "C" __global__ void __raygen__renderFrame()
             // (1 - cc_F * clearcoat) / (1 - p_coat) = 1 for achromatic cc_F,
             // so no throughput change is needed here either.
 
-            // Base Fresnel — shared by specular + non-specular lobes
-            const float  r0_d  = (1.0f - vtx.ior) / (1.0f + vtx.ior);
-            const float3 F0    = devMix(make_float3(r0_d*r0_d, r0_d*r0_d, r0_d*r0_d),
-                                        vtx.albedo, vtx.metallic);
-            const float3 F     = devFresnel(cosV, F0);
+            // Base Fresnel — exact dielectric (handles IOR=1 correctly) blended with metal Schlick.
+            // Schlick with F0=0 gives spurious (1−cosV)^5 at grazing for IOR=1; exact gives 0.
+            const float  fDiel = devFresnelDielectric(cosV, 1.0f / vtx.ior);
+            const float3 F     = devMix(make_float3(fDiel, fDiel, fDiel),
+                                        devFresnel(cosV, vtx.albedo), vtx.metallic);
 
             // Specular probability — metals always specular
             const float p_spec = devClamp01((1.0f - vtx.metallic) * devLuminance(F) + vtx.metallic);
@@ -672,7 +686,9 @@ extern "C" __global__ void __raygen__renderFrame()
                         const float3 H_nee     = devNormalize(V + neeDir);
                         const float  cosH_nee  = fmaxf(0.0f, devDot(H_nee, Nf));
                         const float  cosVH_nee = fmaxf(0.0f, devDot(V, H_nee));
-                        const float3 F_nee     = devFresnel(cosVH_nee, F0);
+                        const float  fNEE_diel = devFresnelDielectric(cosVH_nee, 1.0f / vtx.ior);
+                        const float3 F_nee     = devMix(make_float3(fNEE_diel, fNEE_diel, fNEE_diel),
+                                                        devFresnel(cosVH_nee, vtx.albedo), vtx.metallic);
                         const float  brdfCosI  = devGGX_BRDFCosI(cosI_nee, cosO, cosH_nee, alpha);
 
                         if (brdfCosI > 0.0f)
@@ -814,20 +830,29 @@ extern "C" __global__ void __raygen__renderFrame()
                 const float  eta      = entering ? (1.0f / vtx.ior) : vtx.ior;
 
                 // ── Volumetric scattering ─────────────────────────────────────────
-                // On exit (entering=false) the ray traveled from rayOrig through the
-                // glass interior to vtx.pos over distance vtx.t.  Sample whether a
-                // scatter event occurs before the exit surface: t ~ Exp(1/mfp).
-                // Beer-Lambert was already applied for vtx.t so undo the excess.
+                // Per-channel delta tracking: sample the collision event at σ_max
+                // (the highest per-channel rate, typically blue for Rayleigh media).
+                // When a scatter fires, weight throughput by σ_c/σ_max per channel.
+                // Channels with lower σ carry reduced throughput along the scattered
+                // direction, making the transmitted beam yellow when blue scatters more.
+                // Beer-Lambert was already applied for vtx.t; undo the excess portion.
+                const float3& sc       = vtx.scatteringCoeff;
+                const float   sigmaMax = fmaxf(fmaxf(sc.x, sc.y), sc.z);
                 bool scattered = false;
-                if (!entering && vtx.scattering > 0.0f)
+                if (!entering && sigmaMax > 0.0f)
                 {
-                    const float t_scatter = -vtx.scattering * logf(fmaxf(1e-6f, rnd(seed)));
+                    const float t_scatter = -logf(fmaxf(1e-6f, rnd(seed))) / sigmaMax;
                     if (t_scatter < vtx.t)
                     {
                         const float excess = vtx.t - t_scatter;
                         throughput.x *= expf(absorb.x * excess);
                         throughput.y *= expf(absorb.y * excess);
                         throughput.z *= expf(absorb.z * excess);
+
+                        // Chromatic ratio weight — unbiased delta-tracking estimator.
+                        throughput.x *= sc.x / sigmaMax;
+                        throughput.y *= sc.y / sigmaMax;
+                        throughput.z *= sc.z / sigmaMax;
 
                         const float3 scatterPos = rayOrig + rayDir * t_scatter;
                         float3 Ts, Bs;
@@ -857,7 +882,9 @@ extern "C" __global__ void __raygen__renderFrame()
                 const bool refracted = devRefract(rayDir, Ht, eta, rayDir);
 
                 // Smith G1 on the transmitted direction — mirrors the specular weight.
-                if (refracted)
+                // Skip at eta≈1: the refracted direction equals the incident direction, so
+                // G1(cosT,α) would incorrectly darken grazing angles on an IOR=1 surface.
+                if (refracted && fabsf(eta - 1.0f) > 1e-4f)
                 {
                     // cosine against the far-side normal (-faceN)
                     const float cosT = fmaxf(1e-4f, devDot(rayDir, -faceN));
@@ -871,12 +898,15 @@ extern "C" __global__ void __raygen__renderFrame()
                 {
                     if (entering)
                     {
-                        // σ = -log(albedo) / absorptionDistance
-                        // → exp(-σ·t) = albedo^(t / absorptionDistance)
+                        // Total extinction σ_t = σ_absorption + σ_scattering per channel.
+                        // Scattering removes photons from the direct beam just like absorption;
+                        // including it here makes the transmitted beam yellow when blue
+                        // scatters more (Rayleigh).  The scatter event code undoes the excess
+                        // σ_t beyond the actual scatter point, keeping the estimator correct.
                         const float invDist = 1.0f / vtx.absorptionDistance;
-                        absorb.x = -logf(fmaxf(vtx.albedo.x, 1e-6f)) * invDist;
-                        absorb.y = -logf(fmaxf(vtx.albedo.y, 1e-6f)) * invDist;
-                        absorb.z = -logf(fmaxf(vtx.albedo.z, 1e-6f)) * invDist;
+                        absorb.x = -logf(fmaxf(vtx.albedo.x, 1e-6f)) * invDist + vtx.scatteringCoeff.x;
+                        absorb.y = -logf(fmaxf(vtx.albedo.y, 1e-6f)) * invDist + vtx.scatteringCoeff.y;
+                        absorb.z = -logf(fmaxf(vtx.albedo.z, 1e-6f)) * invDist + vtx.scatteringCoeff.z;
                     }
                     else
                     {
@@ -1075,7 +1105,9 @@ extern "C" __global__ void __closesthit__radiance()
         vtx->transmission       = mat.transmission;
         vtx->ior                = mat.ior;
         vtx->absorptionDistance   = fmaxf(mat.absorptionDistance, 1e-4f);
-        vtx->scattering           = fmaxf(mat.scattering, 0.0f);
+        vtx->scatteringCoeff      = make_float3(fmaxf(mat.scatteringCoeff.x, 0.0f),
+                                               fmaxf(mat.scatteringCoeff.y, 0.0f),
+                                               fmaxf(mat.scatteringCoeff.z, 0.0f));
         vtx->scatteringAnisotropy = mat.scatteringAnisotropy;
         vtx->clearcoat            = mat.clearcoat;
         vtx->clearcoatRoughness = mat.clearcoatRoughness;

@@ -36,7 +36,7 @@ struct MaterialData
     float  transmission          = 0.0f;  // 0 = opaque, 1 = fully transmissive
     float  ior                   = 1.5f;  // index of refraction (glass ≈ 1.5)
     float  absorptionDistance    = 1.0f;  // world-space distance for full albedo absorption
-    float  scattering            = 0.0f;  // mean free path (world units); 0 = disabled
+    float3 scatteringCoeff       = { 0.0f, 0.0f, 0.0f };  // per-channel σ_s (1/MFP); (0,0,0) = disabled
     float  scatteringAnisotropy  = 0.0f;  // Henyey-Greenstein g [-1 back, 0 iso, +1 forward]
 
     float  clearcoat          = 0.0f;  // KHR_materials_clearcoat intensity [0, 1]

@@ -1860,9 +1860,44 @@ bool Application::tick()
                         {
                             anyMatChanged = true;
                         }
-                        if (ImGui::DragFloat("Scattering MFP",  &mats[i].scattering,          0.002f, 0.0f, 1000.0f, "%.4f"))
                         {
-                            anyMatChanged = true;
+                            float3& sc = mats[i].scatteringCoeff;
+
+                            // Scale slider — adjusts all channels proportionally,
+                            // preserving the R:G:B ratios set by the Rayleigh button.
+                            float scale = fmaxf(fmaxf(sc.x, sc.y), sc.z);
+                            if (ImGui::DragFloat("Scatter Scale", &scale, 0.01f, 0.0f, 50.0f, "%.3f"))
+                            {
+                                scale = fmaxf(scale, 0.0f);
+                                const float oldMax = fmaxf(fmaxf(sc.x, sc.y), sc.z);
+                                if (oldMax > 1e-6f)
+                                {
+                                    const float ratio = scale / oldMax;
+                                    sc.x *= ratio;
+                                    sc.y *= ratio;
+                                    sc.z *= ratio;
+                                }
+                                else
+                                {
+                                    sc = make_float3(scale, scale, scale);
+                                }
+                                anyMatChanged = true;
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Rayleigh##scat"))
+                            {
+                                // λ^-4 ratios: R(680nm):G(550nm):B(440nm) → 0.174 : 0.405 : 1.0
+                                const float base = scale > 0.0f ? scale : 1.0f;
+                                sc = make_float3(0.174f * base, 0.405f * base, 1.0f * base);
+                                anyMatChanged = true;
+                            }
+                            if (ImGui::DragFloat3("Scatter Coeff.", &sc.x, 0.01f, 0.0f, 50.0f, "%.3f"))
+                            {
+                                sc.x = fmaxf(sc.x, 0.0f);
+                                sc.y = fmaxf(sc.y, 0.0f);
+                                sc.z = fmaxf(sc.z, 0.0f);
+                                anyMatChanged = true;
+                            }
                         }
                         if (ImGui::SliderFloat("Scatter Aniso.", &mats[i].scatteringAnisotropy, -1.0f, 1.0f, "%.3f"))
                         {
